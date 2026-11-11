@@ -6,13 +6,15 @@
   <img src="assets/sandal.svg" alt="Talaria winged sandal icon" width="160" height="160">
 </p>
 
-[Leia em português](README.pt-BR.md)
+Talaria is an independent, unofficial Windows utility for **Hermes AI Agent by Nous Research**.
+
+[Official Hermes website](https://hermes-agent.nousresearch.com/) · [Download Talaria](https://github.com/enzolfernandes/talaria/releases/latest) · [Leia em português](README.pt-BR.md)
 
 ## Objective
 
 Make it easier to use multiple connectors with a single Hermes gateway day to day.
 
-Talaria shows the status of your Hermes server in the Windows notification area. It can reuse an authenticated server or configure `hermes serve` to start silently when you sign in. Talaria runs on the computer hosting Hermes.
+Talaria runs on the computer hosting Hermes and shows the server's status in the Windows notification area. It can reuse an authenticated server or configure `hermes serve` to start silently when you sign in.
 
 ## Install
 
