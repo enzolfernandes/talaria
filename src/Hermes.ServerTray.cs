@@ -15,7 +15,7 @@ using System.Windows.Forms;
 using Timer = System.Windows.Forms.Timer;
 
 [assembly: System.Reflection.AssemblyTitle("Talaria")]
-[assembly: System.Reflection.AssemblyVersion("0.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.1.1.0")]
 
 namespace HermesServerTray
 {

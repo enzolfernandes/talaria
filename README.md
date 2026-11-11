@@ -1,8 +1,10 @@
 # Talaria
 
-**A hermes auto-server**
+**A Hermes auto-server**
 
-<img src="assets/sandal.svg" alt="Talaria winged sandal icon" width="160" height="160">
+<p align="center">
+  <img src="assets/sandal.svg" alt="Talaria winged sandal icon" width="160" height="160">
+</p>
 
 [Leia em português](README.pt-BR.md)
 
@@ -22,6 +24,16 @@ Talaria shows the status of your Hermes server in the Windows notification area.
 Click the winged sandal to see the address, status, and last check. Green means a valid health response. Yellow means Talaria is waiting or retrying. Red means three consecutive failed checks. Right-click to check now, copy the address, open logs or the installer, or exit the indicator.
 
 **Manutenção** in the installer offers repair and removal. Removing the indicator leaves the server running. **Reverter servidor** is available separately for a server created by Talaria.
+
+## Screenshots
+
+The installer after verifying a protected connection. The address and folder are examples.
+
+![Talaria installer with successful Hermes, Tailscale and connection checks](assets/screenshots/installer.png)
+
+The winged sandal in the Windows notification area and its status panel connected to a local test server.
+
+![Talaria status panel showing a healthy loopback server above the Windows tray icon](assets/screenshots/tray.png)
 
 ## Local data
 

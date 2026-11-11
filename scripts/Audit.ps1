@@ -2,7 +2,8 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $sourceFiles = @(
     '.github/workflows/windows.yml','.gitignore','LICENSE','README.md','README.pt-BR.md',
-    'assets/sandal.svg','scripts/Audit.ps1','scripts/Build.ps1','scripts/Test.ps1',
+    'assets/sandal.svg','assets/screenshots/installer.png','assets/screenshots/tray.png',
+    'scripts/Audit.ps1','scripts/Build.ps1','scripts/Test.ps1',
     'src/Hermes.ServerTray.cs','src/Hermes.SetupLauncher.cs','src/RemoteSupervisor.ps1','src/Setup-Core.ps1','src/Setup-Hermes.ps1',
     'tests/Test-HermesSetup.ps1','tests/Test-ServerTray.cs','tests/Test-SetupHermesFixture.cs'
 )
@@ -37,7 +38,7 @@ Push-Location $repo
 try {
     $tracked = @(git ls-files)
     if ($LASTEXITCODE -ne 0 -or (Compare-Object $sourceFiles $tracked)) { throw 'Tracked files differ from the public source list.' }
-    foreach ($name in $sourceFiles) {
+    foreach ($name in $sourceFiles | Where-Object { $_ -notlike '*.png' }) {
         $staged = (git -c i18n.logOutputEncoding=utf-8 show ":$name") -join "`n"
         if ($LASTEXITCODE -ne 0) { throw "Cannot read staged file $name." }
         Test-PublicText $staged $name

@@ -1,8 +1,10 @@
 # Talaria
 
-**A hermes auto-server**
+**Um servidor automático para o Hermes**
 
-<img src="assets/sandal.svg" alt="Ícone da sandália alada do Talaria" width="160" height="160">
+<p align="center">
+  <img src="assets/sandal.svg" alt="Ícone da sandália alada do Talaria" width="160" height="160">
+</p>
 
 [Read in English](README.md)
 
@@ -22,6 +24,16 @@ O Talaria mostra o estado do servidor Hermes na bandeja do Windows, perto do rel
 Clique na sandália alada para ver o endereço, o estado e a última verificação. Verde indica uma resposta válida. Amarelo indica espera ou nova tentativa. Vermelho indica três falhas consecutivas. Clique com o botão direito para verificar agora, copiar o endereço, abrir os logs ou o instalador, ou sair do indicador.
 
 Abra **Manutenção** no instalador para reparar ou remover o indicador. Remover o indicador mantém o servidor em execução. **Reverter servidor** está disponível separadamente quando o Talaria criou o servidor.
+
+## Capturas de tela
+
+O instalador após verificar uma conexão protegida. O endereço e a pasta são exemplos.
+
+![Instalador do Talaria com as verificações de Hermes, Tailscale e conexão concluídas](assets/screenshots/installer.png)
+
+A sandália alada na bandeja do Windows e o painel de status conectado a um servidor local de teste.
+
+![Painel do Talaria mostrando um servidor de teste em execução acima do ícone da bandeja](assets/screenshots/tray.png)
 
 ## Dados locais
 

@@ -25,9 +25,10 @@ foreach ($size in @(16,20,24,32,64)) {
                 $drawing.DrawGeometry($brush,$null,[Windows.Media.Geometry]::Parse($part.GetAttribute('d')))
             }
             if ($state -ne 'brand') {
-                $drawing.DrawEllipse([Windows.Media.Brushes]::White,$null,[Windows.Point]::new(54,54),10,10)
+                $badgeCenter = [Windows.Point]::new(56,56)
+                $drawing.DrawEllipse([Windows.Media.Brushes]::White,$null,$badgeCenter,8,8)
                 $badge = [Windows.Media.SolidColorBrush]::new([Windows.Media.ColorConverter]::ConvertFromString($colors[$state]))
-                $drawing.DrawEllipse($badge,$null,[Windows.Point]::new(54,54),7,7)
+                $drawing.DrawEllipse($badge,$null,$badgeCenter,6,6)
             }
             $drawing.Pop()
         } finally { $drawing.Close() }
