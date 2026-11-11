@@ -401,9 +401,10 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
     $hermes = Get-HermesInstall $ExeOverride $DataOverride $package
     $desktop = Get-HermesDesktop $hermes $package
     if ($hermes.Code -eq 'Ready') {
-        $version = try { Invoke-SetupCommand $hermes.Exe '--version' } catch { $null }
+        $version = try { Invoke-SetupCommand $hermes.Exe '--version' 30 } catch { $null }
         if ($version -match '(?i)\bHermes\s+Agent\b') {
             $hermes.Message = 'Hermes command line found.'
+            $hermes.VersionOutput = $version
         } elseif ($package -and $hermes.Exe -ieq (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps/hermes.exe')) {
             $hermes.Code = 'AliasDisabled'
             $hermes.Message = 'Enable hermes.exe in Windows App execution aliases, then check again.'
@@ -494,8 +495,16 @@ function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Po
     if ($diagnosis.Hermes.Code -ne 'Ready' -or $diagnosis.Tailscale.Code -ne 'Ready') { throw [ApplicationException]::new('Complete the checks before setting up the server.') }
     if ($diagnosis.Server.Code -ne 'Unavailable') { throw [ApplicationException]::new($diagnosis.Server.Message) }
 
-    $version = Invoke-SetupCommand $diagnosis.Hermes.Exe '--version' 25
-    if ($version -notmatch '(?i)Hermes(?: Agent)?\s+v?(\d+\.\d+\.\d+)' -or [version]$Matches[1] -lt [version]'0.23.0') {
+    $version = $diagnosis.Hermes.VersionOutput
+    $supportsServe = if ($version -match '(?i)Hermes(?: Agent)?\s+v?(\d+\.\d+\.\d+)') {
+        [version]$Matches[1] -ge [version]'0.23.0'
+    } else {
+        # Source installs can lack version metadata even when the serve command is available.
+        $help = Invoke-SetupCommand $diagnosis.Hermes.Exe 'serve --help' 30
+        $help -match '(?im)^\s*usage:\s*hermes(?:\.exe)?\s+serve\b' -and
+            $help -match '--host\b' -and $help -match '--port\b'
+    }
+    if (!$supportsServe) {
         throw [ApplicationException]::new('Setting up a new server requires Hermes Agent 0.23.0 or later with hermes serve support.')
     }
     $name = 'Hermes_Remote_' + $Port

@@ -10,7 +10,17 @@ internal static class TestHermes
 {
     private static void Main(string[] args)
     {
-        if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("Hermes Agent v0.23.0"); return; }
+        if (args.Length == 1 && args[0] == "--version")
+        {
+            bool unknown = File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "unknown-version"));
+            Console.WriteLine(unknown ? "Hermes Agent vunknown" : "Hermes Agent v0.23.0");
+            return;
+        }
+        if (args.Length == 2 && args[0] == "serve" && args[1] == "--help")
+        {
+            Console.WriteLine("usage: hermes serve [--host HOST] [--port PORT]");
+            return;
+        }
         if (args.Length != 5 || args[0] != "serve" || args[2] != "127.0.0.1") Environment.Exit(2);
         string password = Environment.GetEnvironmentVariable("HERMES_DASHBOARD_BASIC_AUTH_PASSWORD");
         if (String.IsNullOrEmpty(password) && !File.Exists("existing-auth"))

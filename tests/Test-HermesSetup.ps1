@@ -58,11 +58,12 @@ try {
     try { Assert-Setup ((Get-SetupDiagnosis $mock $custom $testPort $false).Server.Code -eq 'Conflict') 'porta ocupada detectada' }
     finally { $conflict.Stop() }
 
+    New-Item -ItemType File -Path (Join-Path $bin 'unknown-version') | Out-Null
     $missingLogin = Start-SetupServer $mock $custom $testPort '' ''
     Assert-Setup ($missingLogin.Code -eq 'NeedsLogin' -and !(Get-SetupTask $script:TestServerTask)) 'autenticacao ausente oferece login e desfaz tentativa'
     $password = [Guid]::NewGuid().ToString('N')
     $configured = Start-SetupServer $mock $custom $testPort 'teste-hermes' $password
-    Assert-Setup ($configured.Code -eq 'Ready' -and (Get-SetupTask $script:TestServerTask).State -eq 'Running') 'novo servidor com senha protegida e login real no fixture'
+    Assert-Setup ($configured.Code -eq 'Ready' -and (Get-SetupTask $script:TestServerTask).State -eq 'Running') 'novo servidor com versao indefinida, senha protegida e login no fixture'
     $settingsPath = Join-Path $script:ServerDir 'config.json'
     $secretPath = Join-Path $script:ServerDir 'credentials.local.json'
     $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
