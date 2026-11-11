@@ -50,7 +50,7 @@ namespace Talaria.UI
             this.prominent = prominent;
             FlatStyle = FlatStyle.Flat;
             FlatAppearance.BorderSize = 0;
-            BackColor = Color.Transparent;
+            BackColor = palette.Surface;
             ForeColor = palette.Ink;
             AutoSize = true;
             MinimumSize = new Size(36, 36);
@@ -60,6 +60,7 @@ namespace Talaria.UI
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            e.Graphics.Clear(palette.Surface);
             Color fill = Enabled && prominent ? palette.Accent : palette.Panel;
             Color text = !Enabled ? palette.Muted : prominent ? palette.OnAccent : palette.Ink;
             if (Enabled && (pressed || hovered)) fill = Mix(fill, text, pressed ? 0.20 : 0.10);
