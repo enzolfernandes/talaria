@@ -24,6 +24,8 @@ Talaria runs on the computer hosting Hermes and shows the server's status in the
 4. Open Tailscale and sign in when prompted. Talaria checks for a local Tailscale address. Use **Check again** after completing an external setup or restarting Windows.
 5. Configure the server if prompted. Talaria reuses a healthy authenticated server and compatible login tasks. Select **Install indicator** after the health and authentication checks pass. If Talaria creates credentials, it also signs in and ends that test session.
 
+If the official Hermes installer reports that it cannot find WebView2, install the Microsoft Evergreen WebView2 Runtime and try **Install Hermes Desktop** again. [Microsoft WebView2 download](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section)
+
 Click the winged sandal to see the address, status, and last check. Green means a valid health response. Yellow means Talaria is waiting or retrying. Red means three consecutive failed checks. Right-click to check now, copy the address, open logs or the installer, or exit the indicator.
 
 **Maintenance** in the installer offers repair and removal. Removing the indicator leaves the server running. **Revert server setup** is available separately for a server created by Talaria.

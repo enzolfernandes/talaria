@@ -24,6 +24,8 @@ O Talaria roda no computador que hospeda o Hermes e mostra o estado do servidor 
 4. Abra o Tailscale e entre na conta quando solicitado. O Talaria verifica se a máquina recebeu um endereço do Tailscale. Use **Check again** após concluir uma instalação externa ou reiniciar o Windows.
 5. Configure o servidor se o instalador solicitar. O Talaria reaproveita um servidor saudável e autenticado e as tarefas de início compatíveis. Selecione **Install indicator** após as verificações de saúde e autenticação. Se o Talaria criar credenciais, ele também fará login e encerrará a sessão de teste.
 
+Se o instalador oficial do Hermes informar que não encontrou o WebView2, instale o Microsoft Evergreen WebView2 Runtime e selecione **Install Hermes Desktop** novamente. [Download do Microsoft WebView2](https://developer.microsoft.com/pt-br/microsoft-edge/webview2/#download-section)
+
 Clique na sandália alada para ver o endereço, o estado e a última verificação. Verde indica uma resposta válida. Amarelo indica espera ou nova tentativa. Vermelho indica três falhas consecutivas. Clique com o botão direito para verificar agora, copiar o endereço, abrir os logs ou o instalador, ou sair do indicador.
 
 Abra **Maintenance** no instalador para reparar ou remover o indicador. Remover o indicador mantém o servidor em execução. **Revert server setup** está disponível separadamente quando o Talaria criou o servidor.
