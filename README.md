@@ -26,6 +26,8 @@ Talaria runs on the computer hosting Hermes and shows the server's status in the
 
 If the official Hermes installer reports that it cannot find WebView2, install the Microsoft Evergreen WebView2 Runtime and try **Install Hermes Desktop** again. [Microsoft WebView2 download](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section)
 
+If the official installer stops with `WinError 3` while copying a file whose path exceeds 260 characters, enable **Win32 long paths** in Windows, then reopen the installer. [Microsoft long-path documentation](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation#enable-long-paths-in-windows-10-version-1607-and-later)
+
 Click the winged sandal to see the address, status, and last check. Green means a valid health response. Yellow means Talaria is waiting or retrying. Red means three consecutive failed checks. Right-click to check now, copy the address, open logs or the installer, or exit the indicator.
 
 **Maintenance** in the installer offers repair and removal. Removing the indicator leaves the server running. **Revert server setup** is available separately for a server created by Talaria.
