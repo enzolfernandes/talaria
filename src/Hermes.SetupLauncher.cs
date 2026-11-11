@@ -6,9 +6,10 @@ using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using Talaria.UI;
 
-[assembly: AssemblyTitle("Instalar Talaria")]
-[assembly: AssemblyVersion("0.1.1.0")]
+[assembly: AssemblyTitle("Talaria Setup")]
+[assembly: AssemblyVersion("0.1.2.0")]
 
 internal static class SetupLauncher
 {
@@ -39,8 +40,7 @@ internal static class SetupLauncher
         }
         catch (Exception)
         {
-            if (!server) MessageBox.Show("Não foi possível abrir o instalador do Talaria.",
-                "Talaria", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!server) ChromeForm.Prompt(new Palette("System"), null, "Talaria Setup", "Could not open Talaria Setup.", "OK", false);
             return 1;
         }
     }

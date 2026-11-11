@@ -46,7 +46,7 @@ function Get-HermesInstall([string]$ExeOverride, [string]$DataOverride) {
     $candidates += Join-Path $standard 'bin\hermes.exe'
     if ($ExeOverride) { $exe = Get-ExeCandidate '' @($ExeOverride) }
     else { $exe = Get-ExeCandidate 'hermes.exe' $candidates }
-    if (!$exe) { return @{ Code='Missing'; Message='Hermes não localizado.' } }
+    if (!$exe) { return @{ Code='Missing'; Message='Hermes was not found.' } }
 
     $parent = Split-Path $exe -Parent
     $inferred = if ((Split-Path $parent -Leaf) -eq 'bin') { Split-Path $parent -Parent } else { $null }
@@ -59,10 +59,10 @@ function Get-HermesInstall([string]$ExeOverride, [string]$DataOverride) {
         if ($directory -eq $DataOverride -or (Test-Path -LiteralPath (Join-Path $directory 'config.yaml')) -or
             (Test-Path -LiteralPath (Join-Path $directory '.env')) -or
             (Test-Path -LiteralPath (Join-Path $directory 'bin\hermes.exe'))) {
-            return @{ Code='Ready'; Exe=$exe; Data=(Resolve-Path -LiteralPath $directory).Path; Message='Hermes localizado.' }
+            return @{ Code='Ready'; Exe=$exe; Data=(Resolve-Path -LiteralPath $directory).Path; Message='Hermes found.' }
         }
     }
-    return @{ Code='MissingData'; Exe=$exe; Message='Selecione a pasta de dados do Hermes.' }
+    return @{ Code='MissingData'; Exe=$exe; Message='Select the Hermes data folder.' }
 }
 
 function Test-LocalSetupAddress([string]$Address) {
@@ -85,7 +85,7 @@ function Get-TailscaleInstall {
         if ($directory) { $candidates += Join-Path $directory 'Tailscale\tailscale.exe' }
     }
     $exe = Get-ExeCandidate 'tailscale.exe' $candidates
-    if (!$exe) { return @{ Code='Missing'; Message='Tailscale não localizado.' } }
+    if (!$exe) { return @{ Code='Missing'; Message='Tailscale was not found.' } }
     $app = Join-Path (Split-Path $exe -Parent) 'tailscale-ipn.exe'
     if (!(Test-Path -LiteralPath $app -PathType Leaf)) { $app = $null }
     try {
@@ -95,13 +95,13 @@ function Get-TailscaleInstall {
             if ($json.BackendState -eq 'Running') {
                 foreach ($address in @($json.TailscaleIPs)) {
                     if (Test-LocalSetupAddress $address) {
-                        return @{ Code='Ready'; Exe=$exe; App=$app; Address=$address; Message="Tailscale conectado em $address." }
+                        return @{ Code='Ready'; Exe=$exe; App=$app; Address=$address; Message="Tailscale connected at $address." }
                     }
                 }
             }
         }
     } catch { }
-    return @{ Code='Disconnected'; Exe=$exe; App=$app; Message='Abra o Tailscale, entre na conta ou reconecte.' }
+    return @{ Code='Disconnected'; Exe=$exe; App=$app; Message='Open Tailscale, then sign in or reconnect.' }
 }
 
 function Invoke-LocalHermesRequest([string]$Endpoint, [string]$Path, [Net.CookieContainer]$Cookies, [string]$Body) {
@@ -153,20 +153,20 @@ function Invoke-LocalHermesRequest([string]$Endpoint, [string]$Path, [Net.Cookie
 function Test-HermesEndpoint([string]$Endpoint) {
     $health = Invoke-LocalHermesRequest $Endpoint '/api/health'
     if ($health.Code -ne 200 -or $health.Data.ok -isnot [bool] -or !$health.Data.ok -or !$health.Data.version) {
-        return @{ Code='Unavailable'; Message='O Hermes não respondeu ao teste de saúde.' }
+        return @{ Code='Unavailable'; Message='Hermes did not respond to the health check.' }
     }
     if ($health.Data.auth_required -isnot [bool] -or !$health.Data.auth_required) {
-        return @{ Code='Unprotected'; Message='O servidor respondeu, mas o acesso exige configuração de autenticação.' }
+        return @{ Code='Unprotected'; Message='The server responded. Configure authentication before enabling access.' }
     }
     $providers = Invoke-LocalHermesRequest $Endpoint '/api/auth/providers'
     if ($providers.Code -ne 200 -or !@($providers.Data.providers | Where-Object { $_.name }).Count) {
-        return @{ Code='NoProvider'; Message='O Hermes não oferece um provedor de login.' }
+        return @{ Code='NoProvider'; Message='Hermes has no sign-in provider configured.' }
     }
     $anonymous = Invoke-LocalHermesRequest $Endpoint '/api/auth/me'
     if ($anonymous.Code -notin @(401,403)) {
-        return @{ Code='Unprotected'; Message='O teste de recusa de acesso anônimo falhou.' }
+        return @{ Code='Unprotected'; Message='The server failed the anonymous access check.' }
     }
-    return @{ Code='Ready'; Version=[string]$health.Data.version; Message="Hermes $($health.Data.version) respondendo com login protegido." }
+    return @{ Code='Ready'; Version=[string]$health.Data.version; Message="Hermes $($health.Data.version) is responding with sign-in protection." }
 }
 
 function Test-NewHermesLogin([string]$Endpoint, [string]$Username, [string]$Password) {
@@ -233,7 +233,7 @@ function Stop-SetupTask([string]$Name) {
         Stop-ScheduledTask -TaskName $Name -TaskPath '\'
         $deadline = [DateTime]::UtcNow.AddSeconds(8)
         while ((Get-SetupTask $Name).State -eq 'Running' -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
-        if ((Get-SetupTask $Name).State -eq 'Running') { throw 'A tarefa não pôde ser encerrada com segurança.' }
+        if ((Get-SetupTask $Name).State -eq 'Running') { throw [ApplicationException]::new('The scheduled task could not be stopped safely.') }
     }
 }
 
@@ -245,11 +245,11 @@ function Write-SetupJson([string]$Path, $Object) {
 }
 
 function Start-SetupTransaction([string]$Name, [string]$Exe, [string]$Arguments, [string[]]$Files, [bool]$FilesOnly = $false) {
-    if (Test-Path -LiteralPath $script:Pending) { throw 'Há uma operação anterior aguardando recuperação.' }
+    if (Test-Path -LiteralPath $script:Pending) { throw [ApplicationException]::new('A previous operation is waiting for recovery.') }
     $directory = Join-Path (Join-Path $script:SetupRoot 'backups') ([DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $task = Get-SetupTask $Name
-    if ($task -and !(Test-SetupTask $task $Exe $Arguments)) { throw 'A tarefa existente pertence a outra configuração.' }
+    if ($task -and !(Test-SetupTask $task $Exe $Arguments)) { throw [ApplicationException]::new('The existing scheduled task belongs to a different setup.') }
     if ($task -and !$FilesOnly) {
         Export-ScheduledTask -TaskName $Name -TaskPath '\' | Set-Content -LiteralPath (Join-Path $directory 'task.xml') -Encoding Unicode
     }
@@ -272,11 +272,11 @@ function Complete-SetupTransaction {
 function Undo-SetupTransaction {
     if (!(Test-Path -LiteralPath $script:Pending -PathType Leaf)) { return }
     $journal = Get-Content -LiteralPath $script:Pending -Raw | ConvertFrom-Json
-    if ($journal.Name -ne $script:TrayTask -and $journal.Name -notmatch '^Hermes_Remote_\d{1,5}$') { throw 'Registro de recuperação inválido.' }
+    if ($journal.Name -ne $script:TrayTask -and $journal.Name -notmatch '^Hermes_Remote_\d{1,5}$') { throw [ApplicationException]::new('Invalid recovery record.') }
     $expectedExe = if ($journal.Name -eq $script:TrayTask) { Join-Path $script:TrayDir 'Hermes.ServerTray.exe' }
         else { Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe' }
     $expectedArgs = if ($journal.Name -eq $script:TrayTask) { '' } else { '--server' }
-    if ($journal.Exe -ine $expectedExe -or $journal.Arguments -ne $expectedArgs) { throw 'Executável de recuperação inválido.' }
+    if ($journal.Exe -ine $expectedExe -or $journal.Arguments -ne $expectedArgs) { throw [ApplicationException]::new('Invalid recovery executable.') }
     $allowedFiles = @(
         (Join-Path $script:TrayDir 'Hermes.ServerTray.exe'),(Join-Path $script:TrayDir 'config.json'),
         (Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe'),(Join-Path $script:ServerDir 'PortableSupervisor.ps1'),
@@ -284,13 +284,13 @@ function Undo-SetupTransaction {
         (Join-Path $script:SetupRoot 'Instalar-Talaria.exe')
     )
     $backupRoot = [IO.Path]::GetFullPath((Join-Path $script:SetupRoot 'backups')) + '\'
-    if (![IO.Path]::GetFullPath($journal.Backup).StartsWith($backupRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Backup fora da pasta esperada.' }
+    if (![IO.Path]::GetFullPath($journal.Backup).StartsWith($backupRoot, [StringComparison]::OrdinalIgnoreCase)) { throw [ApplicationException]::new('The backup is outside the expected folder.') }
     foreach ($record in $journal.Files) {
-        if ($record.Path -notin $allowedFiles -or $record.Copy -notmatch '^file-\d+$') { throw 'Arquivo de recuperação inválido.' }
+        if ($record.Path -notin $allowedFiles -or $record.Copy -notmatch '^file-\d+$') { throw [ApplicationException]::new('Invalid recovery file.') }
     }
     $task = Get-SetupTask $journal.Name
     if ($task -and !$journal.FilesOnly) {
-        if (!(Test-SetupTask $task $journal.Exe $journal.Arguments)) { throw 'A tarefa mudou durante a instalação. O backup foi preservado.' }
+        if (!(Test-SetupTask $task $journal.Exe $journal.Arguments)) { throw [ApplicationException]::new('The scheduled task changed during setup. The backup was kept.') }
         Stop-SetupTask $journal.Name
         Unregister-ScheduledTask -TaskName $journal.Name -TaskPath '\' -Confirm:$false
     }
@@ -340,7 +340,7 @@ function Find-SetupPort([string]$Address, [int]$Port) {
 function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$SuggestPort) {
     $hermes = Get-HermesInstall $ExeOverride $DataOverride
     $tailscale = Get-TailscaleInstall
-    $server = @{ Code='Pending'; Message='Conclua as verificações do Hermes e do Tailscale.' }
+    $server = @{ Code='Pending'; Message='Complete the Hermes and Tailscale checks.' }
     $endpoint = $null
     if ($tailscale.Code -eq 'Ready') {
         if ($SuggestPort) { $Port = Find-SetupPort $tailscale.Address $Port }
@@ -351,7 +351,7 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
                 $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
                 if ($listener) {
                     $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
-                    $server = @{ Code='Conflict'; Message="Porta $Port ocupada por $($process.ProcessName) (PID $($listener.OwningProcess)). Escolha outra porta ou confira o servidor existente." }
+                    $server = @{ Code='Conflict'; Message="Port $Port is in use by $($process.ProcessName) (PID $($listener.OwningProcess)). Choose another port or check the existing server." }
                 }
             }
         }
@@ -374,7 +374,7 @@ function Protect-SetupSecret([string]$Value) {
 function New-SetupAuth([string]$Username, [string]$Password) {
     if ($Username -notmatch '^[a-zA-Z0-9_.@-]{1,64}$' -or $Password.Length -lt 12 -or $Password.Length -gt 256 -or
         $Password -match '[\r\n\x00]' -or $Password -cne $Password.Trim()) {
-        throw 'Use um usuário simples e uma senha de 12 a 256 caracteres, sem espaços nas extremidades.'
+        throw [ApplicationException]::new('Use a simple username and a password of 12 to 256 characters without leading or trailing spaces.')
     }
     $key = New-Object byte[] 32
     $random = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -389,7 +389,7 @@ function Get-SetupServerFiles {
 }
 
 function Convert-SetupLegacyAuth($Auth) {
-    if (!$Auth.Username -or !$Auth.Password -or !$Auth.SigningSecret) { throw 'Credenciais antigas incompletas. Confira o login do servidor.' }
+    if (!$Auth.Username -or !$Auth.Password -or !$Auth.SigningSecret) { throw [ApplicationException]::new('The previous credentials are incomplete. Check the server sign-in settings.') }
     return @{ Version=1; Username=(Protect-SetupSecret $Auth.Username); Password=$Auth.Password; SigningSecret=$Auth.SigningSecret }
 }
 
@@ -401,8 +401,8 @@ function Update-SetupCredentials([string]$Endpoint) {
     $config = Join-Path $script:ServerDir 'config.json'
     $supervisor = Join-Path $script:ServerDir 'PortableSupervisor.ps1'
     $exe = Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe'
-    if (!(Test-SetupTask (Get-SetupTask $managed.Task) $exe '--server')) { throw 'A tarefa antiga do servidor não corresponde à configuração gravada.' }
-    if (Test-Path -LiteralPath $credentials) { throw 'Foram encontradas duas configurações de login. Confira os arquivos locais antes de reparar.' }
+    if (!(Test-SetupTask (Get-SetupTask $managed.Task) $exe '--server')) { throw [ApplicationException]::new('The previous server task does not match the saved configuration.') }
+    if (Test-Path -LiteralPath $credentials) { throw [ApplicationException]::new('Two sign-in configurations were found. Check the local files before running repair.') }
     $separated = Convert-SetupLegacyAuth $managed.Auth
     $null = Start-SetupTransaction $managed.Task $exe '--server' @($credentials,$config,$supervisor) $true
     try {
@@ -410,33 +410,33 @@ function Update-SetupCredentials([string]$Endpoint) {
         Copy-Item -LiteralPath (Join-Path $script:Payload 'PortableSupervisor.ps1') -Destination $supervisor -Force
         $managed.PSObject.Properties.Remove('Auth')
         Write-SetupJson $config $managed
-        if ((Test-HermesEndpoint $Endpoint).Code -ne 'Ready') { throw 'O servidor deixou de responder durante o reparo. A configuração anterior será restaurada.' }
+        if ((Test-HermesEndpoint $Endpoint).Code -ne 'Ready') { throw [ApplicationException]::new('The server stopped responding during repair. The previous configuration will be restored.') }
         Complete-SetupTransaction
     } catch { Undo-SetupTransaction; throw }
 }
 
 function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Port, [string]$Username, [string]$Password) {
     $diagnosis = Get-SetupDiagnosis $ExeOverride $DataOverride $Port $false
-    if ($diagnosis.Server.Code -eq 'Ready') { return @{ Code='Ready'; Message='O servidor saudável foi reaproveitado.' } }
-    if ($diagnosis.Hermes.Code -ne 'Ready' -or $diagnosis.Tailscale.Code -ne 'Ready') { throw 'Conclua o diagnóstico antes de configurar o servidor.' }
-    if ($diagnosis.Server.Code -ne 'Unavailable') { throw $diagnosis.Server.Message }
+    if ($diagnosis.Server.Code -eq 'Ready') { return @{ Code='Ready'; Message='The existing healthy server was reused.' } }
+    if ($diagnosis.Hermes.Code -ne 'Ready' -or $diagnosis.Tailscale.Code -ne 'Ready') { throw [ApplicationException]::new('Complete the checks before setting up the server.') }
+    if ($diagnosis.Server.Code -ne 'Unavailable') { throw [ApplicationException]::new($diagnosis.Server.Message) }
 
     $version = Invoke-SetupCommand $diagnosis.Hermes.Exe '--version' 25
     if ($version -notmatch '(?i)Hermes(?: Agent)?\s+v?(\d+\.\d+\.\d+)' -or [version]$Matches[1] -lt [version]'0.23.0') {
-        throw 'Para configurar um novo servidor, use Hermes Agent 0.23.0 ou mais recente com suporte a hermes serve.'
+        throw [ApplicationException]::new('Setting up a new server requires Hermes Agent 0.23.0 or later with hermes serve support.')
     }
     $name = 'Hermes_Remote_' + $Port
     $exe = Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe'
     $managed = Get-ManagedServer
     if ($managed -and ($managed.Task -ne $name -or $managed.Address -ne $diagnosis.Tailscale.Address -or
         $managed.HermesHome -ne $diagnosis.Hermes.Data -or $managed.HermesExecutable -ne $diagnosis.Hermes.Exe)) {
-        throw 'Já existe uma configuração de servidor deste instalador. Use o endereço original ou reverta essa configuração antes de trocar.'
+        throw [ApplicationException]::new('A Talaria server setup already exists. Use its original address or revert the setup before changing it.')
     }
     $otherTasks = @(Get-ScheduledTask -TaskPath '\' | Where-Object { $_.TaskName -match '^Hermes_Remote_\d{1,5}$' -and $_.TaskName -ne $name })
-    if ($otherTasks.Count) { throw 'Já existe uma tarefa de servidor Hermes em outra porta. Use a porta dessa tarefa para evitar duplicidade.' }
+    if ($otherTasks.Count) { throw [ApplicationException]::new('A Hermes server task already uses a different port. Use that port to avoid starting a duplicate server.') }
     $currentTask = Get-SetupTask $name
     if ($currentTask -and (!$managed -or !(Test-SetupTask $currentTask $exe '--server'))) {
-        throw 'Há uma tarefa de servidor criada fora deste instalador. Inicie-a no Agendador e verifique novamente.'
+        throw [ApplicationException]::new('An existing server task was created outside Talaria. Start it from Task Scheduler and check again.')
     }
     $credentialPath = Join-Path $script:ServerDir 'credentials.local.json'
     $auth = if ($Password) { New-SetupAuth $Username $Password }
@@ -457,7 +457,7 @@ function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Po
             HermesExecutable=$diagnosis.Hermes.Exe; Address=$diagnosis.Tailscale.Address; Port=$Port;
             LogDirectory=$logDirectory
         }
-        if (!(Test-SetupSchedule $currentTask)) { Register-SetupTask $name $exe '--server' 'Servidor Hermes no Tailscale' 30 ([bool]$currentTask) }
+        if (!(Test-SetupSchedule $currentTask)) { Register-SetupTask $name $exe '--server' 'Hermes server on Tailscale' 30 ([bool]$currentTask) }
         Enable-ScheduledTask -TaskName $name -TaskPath '\' | Out-Null
         Start-ScheduledTask -TaskName $name -TaskPath '\'
 
@@ -466,28 +466,28 @@ function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Po
             $probe = Test-HermesEndpoint $diagnosis.Endpoint
             if ($probe.Code -eq 'Ready') {
                 if ($Password -and !(Test-NewHermesLogin $diagnosis.Endpoint $Username $Password)) {
-                    throw 'O teste do novo login falhou. Se já houver valores de login em .env, use o guia de autenticação e tente novamente.'
+                    throw [ApplicationException]::new('The new sign-in test failed. If .env already contains sign-in settings, check the authentication guide and try again.')
                 }
                 if (!(Test-OwnedServerListener $Port $diagnosis.Tailscale.Address $exe)) {
-                    throw 'O endereço respondeu, mas o processo da porta não pertence à nova tarefa. A configuração anterior foi preservada.'
+                    throw [ApplicationException]::new('The address responded, but the process listening on the port belongs to a different task. The previous configuration was kept.')
                 }
                 Complete-SetupTransaction
-                return @{ Code='Ready'; Message='Servidor iniciado e autenticação verificada.' }
+                return @{ Code='Ready'; Message='Server started and authentication verified.' }
             }
-            if ($probe.Code -eq 'Unprotected') { throw $probe.Message }
+            if ($probe.Code -eq 'Unprotected') { throw [ApplicationException]::new($probe.Message) }
             $missingLogin = $probe.Code -eq 'NoProvider'
             if (!$missingLogin -and (Test-Path -LiteralPath $logPath)) {
                 $missingLogin = [bool](Get-Content -LiteralPath $logPath -Tail 25 -ErrorAction SilentlyContinue |
                     Select-String -Pattern 'always requires an auth provider|no auth providers registered')
             }
             if ($missingLogin) {
-                if ($Password) { throw 'O Hermes não aceitou o novo provedor de login. Confira o diagnóstico do servidor.' }
+                if ($Password) { throw [ApplicationException]::new('Hermes rejected the new sign-in provider. Check the server diagnosis.') }
                 Undo-SetupTransaction
-                return @{ Code='NeedsLogin'; Message='Configure um usuário e uma senha para habilitar o acesso pelo Tailscale.' }
+                return @{ Code='NeedsLogin'; Message='Set up a username and password to enable access over Tailscale.' }
             }
             Start-Sleep -Milliseconds 750
         } while ([DateTime]::UtcNow -lt $deadline)
-        throw "O servidor não ficou pronto. Consulte o log em $logPath."
+        throw [ApplicationException]::new("The server did not become ready. Check the log at $logPath.")
     } catch {
         Undo-SetupTransaction
         throw
@@ -522,13 +522,13 @@ function Get-TrayStatus([string]$Endpoint) {
 
 function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$Repair = $false) {
     $diagnosis = Get-SetupDiagnosis $ExeOverride $DataOverride $Port $false
-    if ($diagnosis.Server.Code -ne 'Ready') { throw $diagnosis.Server.Message }
+    if ($diagnosis.Server.Code -ne 'Ready') { throw [ApplicationException]::new($diagnosis.Server.Message) }
     $exe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
     $config = Join-Path $script:TrayDir 'config.json'
     $setupFile = Join-Path $script:SetupRoot 'Instalar-Talaria.exe'
     $setupPayload = Join-Path $script:Payload 'Hermes.SetupLauncher.exe'
     $task = Get-SetupTask $script:TrayTask
-    if ($task -and !(Test-SetupTask $task $exe)) { throw 'A tarefa do indicador pertence a outra configuração.' }
+    if ($task -and !(Test-SetupTask $task $exe)) { throw [ApplicationException]::new('The indicator task belongs to a different setup.') }
     $packaged = Join-Path $script:Payload 'Hermes.ServerTray.exe'
     $matching = (Test-Path -LiteralPath $exe) -and (Get-FileHash -LiteralPath $exe).Hash -eq (Get-FileHash -LiteralPath $packaged).Hash
     $installed = if (Test-Path -LiteralPath $config) { try { Get-Content -LiteralPath $config -Raw | ConvertFrom-Json } catch { } }
@@ -536,9 +536,9 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
     $setupMatching = (Test-Path -LiteralPath $setupFile -PathType Leaf) -and
         (Get-FileHash -LiteralPath $setupFile).Hash -eq (Get-FileHash -LiteralPath $setupPayload).Hash
     if ((Test-SetupSchedule $task) -and $matching -and $setupMatching -and $installed.Endpoint -eq $diagnosis.Endpoint -and (Get-TrayStatus $diagnosis.Endpoint)) {
-        return @{ Code='Ready'; Message='O indicador existente está respondendo e registrado na bandeja.' }
+        return @{ Code='Ready'; Message='The existing indicator is responding and registered in the tray.' }
     }
-    if (!$task -and (Test-Path -LiteralPath $exe) -and !$matching) { throw 'A pasta do indicador contém um executável não reconhecido.' }
+    if (!$task -and (Test-Path -LiteralPath $exe) -and !$matching) { throw [ApplicationException]::new('The indicator folder contains an unrecognized executable.') }
 
     $managed = Get-ManagedServer
     $log = if ($managed -and $managed.Port -eq $Port) { Join-Path $managed.LogDirectory 'remote.log' }
@@ -551,40 +551,40 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
         if (!$matching) { Copy-Item -LiteralPath $packaged -Destination $exe -Force }
         if (!$setupMatching) { Copy-Item -LiteralPath $setupPayload -Destination $setupFile -Force }
         Write-SetupJson $config @{ Endpoint=$diagnosis.Endpoint; RemoteLog=$log; SetupPath=$setupFile }
-        if (!(Test-SetupSchedule $task)) { Register-SetupTask $script:TrayTask $exe '' 'Indicador Hermes Servidor na bandeja' 5 ([bool]$task) }
+        if (!(Test-SetupSchedule $task)) { Register-SetupTask $script:TrayTask $exe '' 'Talaria tray indicator for Hermes' 5 ([bool]$task) }
         Enable-ScheduledTask -TaskName $script:TrayTask -TaskPath '\' | Out-Null
         Start-ScheduledTask -TaskName $script:TrayTask -TaskPath '\'
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
         do {
             if (Get-TrayStatus $diagnosis.Endpoint) {
                 Complete-SetupTransaction
-                return @{ Code='Ready'; Message='Indicador instalado e registrado na bandeja.' }
+                return @{ Code='Ready'; Message='Indicator installed and registered in the tray.' }
             }
             Start-Sleep -Milliseconds 250
         } while ([DateTime]::UtcNow -lt $deadline)
-        throw 'O Windows não confirmou o registro do indicador na bandeja.'
+        throw [ApplicationException]::new('Windows did not confirm registration of the tray indicator.')
     } catch { Undo-SetupTransaction; throw }
 }
 
 function Remove-SetupTray {
     $exe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
     $config = Join-Path $script:TrayDir 'config.json'
-    if (!(Test-SetupTask (Get-SetupTask $script:TrayTask) $exe)) { throw 'Não há um indicador deste instalador para remover.' }
+    if (!(Test-SetupTask (Get-SetupTask $script:TrayTask) $exe)) { throw [ApplicationException]::new('There is no Talaria indicator to remove.') }
     $null = Start-SetupTransaction $script:TrayTask $exe '' @($exe,$config)
     try {
         Stop-SetupTask $script:TrayTask
         Unregister-ScheduledTask -TaskName $script:TrayTask -TaskPath '\' -Confirm:$false
         foreach ($path in @($exe,$config)) { if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force } }
         Complete-SetupTransaction
-        return @{ Code='Ready'; Message='Indicador removido. O servidor continua independente.' }
+        return @{ Code='Ready'; Message='Indicator removed. The server is managed separately.' }
     } catch { Undo-SetupTransaction; throw }
 }
 
 function Remove-SetupServer {
     $managed = Get-ManagedServer
-    if (!$managed) { throw 'Não há um servidor configurado por este instalador.' }
+    if (!$managed) { throw [ApplicationException]::new('There is no server configured by Talaria.') }
     $exe = Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe'
-    if (!(Test-SetupTask (Get-SetupTask $managed.Task) $exe '--server')) { throw 'A tarefa do servidor não corresponde à configuração gravada.' }
+    if (!(Test-SetupTask (Get-SetupTask $managed.Task) $exe '--server')) { throw [ApplicationException]::new('The server task does not match the saved configuration.') }
     $paths = Get-SetupServerFiles
     $null = Start-SetupTransaction $managed.Task $exe '--server' $paths
     try {
@@ -592,6 +592,6 @@ function Remove-SetupServer {
         Unregister-ScheduledTask -TaskName $managed.Task -TaskPath '\' -Confirm:$false
         foreach ($path in $paths) { if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force } }
         Complete-SetupTransaction
-        return @{ Code='Ready'; Message='A configuração de servidor deste instalador foi revertida.' }
+        return @{ Code='Ready'; Message='The Talaria server setup was reverted.' }
     } catch { Undo-SetupTransaction; throw }
 }

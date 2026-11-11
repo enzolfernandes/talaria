@@ -4,7 +4,7 @@ $sourceFiles = @(
     '.github/workflows/windows.yml','.gitignore','LICENSE','README.md','README.pt-BR.md',
     'assets/sandal.svg','assets/screenshots/installer.png','assets/screenshots/tray.png',
     'scripts/Audit.ps1','scripts/Build.ps1','scripts/Test.ps1',
-    'src/Hermes.ServerTray.cs','src/Hermes.SetupLauncher.cs','src/RemoteSupervisor.ps1','src/Setup-Core.ps1','src/Setup-Hermes.ps1',
+    'src/Hermes.ServerTray.cs','src/Hermes.SetupLauncher.cs','src/RemoteSupervisor.ps1','src/Setup-Core.ps1','src/Setup-Hermes.ps1','src/Talaria.Ui.cs',
     'tests/Test-HermesSetup.ps1','tests/Test-ServerTray.cs','tests/Test-SetupHermesFixture.cs'
 )
 $patterns = @(
@@ -47,7 +47,7 @@ try {
         git check-ignore -q -- $name
         if ($LASTEXITCODE -ne 0) { throw "Local path $name is not ignored." }
     }
-    $package = [IO.File]::ReadAllBytes((Join-Path $repo 'dist/Instalar-Talaria.exe'))
+    $package = [IO.File]::ReadAllBytes((Join-Path $repo 'dist/Talaria-Setup.exe'))
     $installer = [Reflection.Assembly]::Load($package)
     $expected = @('Hermes.ServerTray.exe','Setup-Core.ps1','Setup-Hermes.ps1','PortableSupervisor.ps1','brand-64.png')
     if (Compare-Object $expected $installer.GetManifestResourceNames()) { throw 'Unexpected installer resources.' }
@@ -58,7 +58,7 @@ try {
     $expectedIcons = foreach ($size in @(16,20,24,32)) { foreach ($state in @('online','waiting','offline')) { "$state-$size.png" } }
     if (Compare-Object $expectedIcons $tray.GetManifestResourceNames()) { throw 'Unexpected tray resources.' }
     foreach ($encoding in @([Text.Encoding]::UTF8,[Text.Encoding]::Unicode)) {
-        Test-PublicText ($encoding.GetString($package)) 'Instalar-Talaria.exe'
+        Test-PublicText ($encoding.GetString($package)) 'Talaria-Setup.exe'
     }
     Write-Output 'PASS tracked source, local exclusions, installer and embedded resources'
 } finally { Pop-Location }

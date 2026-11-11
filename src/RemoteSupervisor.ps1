@@ -14,7 +14,7 @@ if (!$SettingsPath -and $MyInvocation.MyCommand.Name -eq 'PortableSupervisor.ps1
 }
 if ($SettingsPath) {
     $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
-    if ($settings.OwnerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'Conta do servidor diferente da conta configurada.' }
+    if ($settings.OwnerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'The server is running under a different Windows account.' }
     $HermesHome = $settings.HermesHome
     $HermesExecutable = $settings.HermesExecutable
     $ListenAddress = $settings.Address
@@ -23,11 +23,11 @@ if ($SettingsPath) {
     $parsed = $null
     if (![Net.IPAddress]::TryParse($ListenAddress,[ref]$parsed) -or $parsed.AddressFamily -ne 'InterNetwork' -or
         $Port -lt 1 -or $Port -gt 65535 -or ![IO.Path]::IsPathRooted($HermesHome) -or ![IO.Path]::IsPathRooted($HermesExecutable)) {
-        throw 'Configuração do servidor inválida.'
+        throw 'Invalid server configuration.'
     }
 }
 if (!$HermesExecutable) { $HermesExecutable = Join-Path $HermesHome 'bin\hermes.exe' }
-if (!$ListenAddress) { throw 'Informe o endereço local do servidor.' }
+if (!$ListenAddress) { throw 'Specify the local server address.' }
 if (!$LogDirectory) { $LogDirectory = Join-Path $HermesHome 'logs\remote-9119' }
 New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
 Add-Type -TypeDefinition @'
@@ -125,7 +125,7 @@ try {
         }
         if (Test-Path -LiteralPath $localAuth) {
             $auth = Get-Content -LiteralPath $localAuth -Raw | ConvertFrom-Json
-            if ($auth.Version -ne 1) { throw 'Formato do arquivo local de login não reconhecido.' }
+            if ($auth.Version -ne 1) { throw 'Unrecognized local credentials format.' }
             $env:HERMES_DASHBOARD_BASIC_AUTH_USERNAME = Unlock-LocalSecret $auth.Username
         } else {
             $auth = $settings.Auth

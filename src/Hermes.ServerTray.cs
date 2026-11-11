@@ -12,10 +12,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Talaria.UI;
 using Timer = System.Windows.Forms.Timer;
 
 [assembly: System.Reflection.AssemblyTitle("Talaria")]
-[assembly: System.Reflection.AssemblyVersion("0.1.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.1.2.0")]
 
 namespace HermesServerTray
 {
@@ -42,7 +43,7 @@ namespace HermesServerTray
             try
             {
                 if (!AddressIsPresent(address))
-                    return new ProbeResult(ProbeKind.MissingAddress, "Aguardando o endereço Tailscale.");
+                    return new ProbeResult(ProbeKind.MissingAddress, "Waiting for the Tailscale address.");
 
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(new Uri(endpoint, "/api/health"));
                 request.Proxy = null;
@@ -67,20 +68,20 @@ namespace HermesServerTray
                         !json.TryGetValue("version", out version) || !(version is string) ||
                         String.IsNullOrWhiteSpace((string)version))
                         return InvalidResponse();
-                    return new ProbeResult(ProbeKind.Healthy, "Hermes " + (string)version + " respondeu à verificação local.");
+                    return new ProbeResult(ProbeKind.Healthy, "Hermes " + (string)version + " passed the local health check.");
                 }
             }
             catch (WebException error)
             {
                 if (error.Response != null) error.Response.Dispose();
-                return new ProbeResult(ProbeKind.Failed, "O servidor não respondeu à verificação de saúde.");
+                return new ProbeResult(ProbeKind.Failed, "The server did not respond to the health check.");
             }
             catch (IOException) { return InvalidResponse(); }
             catch (ArgumentException) { return InvalidResponse(); }
             catch (InvalidOperationException) { return InvalidResponse(); }
             catch (NetworkInformationException)
             {
-                return new ProbeResult(ProbeKind.Failed, "Não foi possível consultar a rede local.");
+                return new ProbeResult(ProbeKind.Failed, "Could not check the local network.");
             }
         }
 
@@ -98,7 +99,7 @@ namespace HermesServerTray
 
         private static ProbeResult InvalidResponse()
         {
-            return new ProbeResult(ProbeKind.Failed, "A resposta recebida não é a resposta de saúde esperada do Hermes.");
+            return new ProbeResult(ProbeKind.Failed, "The response did not match the expected Hermes health response.");
         }
     }
 
@@ -113,8 +114,8 @@ namespace HermesServerTray
         public StatusTracker()
         {
             State = TrayState.Waiting;
-            Label = "Verificando";
-            Detail = "Primeira verificação em andamento.";
+            Label = "Checking";
+            Detail = "Running the first check.";
         }
 
         public void Apply(ProbeResult result)
@@ -124,20 +125,20 @@ namespace HermesServerTray
             if (result.Kind == ProbeKind.Healthy)
             {
                 State = TrayState.Online;
-                Label = "Respondendo";
+                Label = "Online";
                 Failures = 0;
             }
             else if (result.Kind == ProbeKind.MissingAddress)
             {
                 State = TrayState.Waiting;
-                Label = "Aguardando Tailscale";
+                Label = "Waiting for Tailscale";
                 Failures = 0;
             }
             else
             {
                 Failures = Math.Min(Failures + 1, 3);
                 State = Failures == 3 ? TrayState.Offline : TrayState.Waiting;
-                Label = State == TrayState.Offline ? "Indisponível" : "Tentando novamente";
+                Label = State == TrayState.Offline ? "Offline" : "Retrying";
             }
         }
     }
@@ -310,9 +311,9 @@ namespace HermesServerTray
         private readonly TrayWindow window;
         private readonly Timer timer;
         private readonly ContextMenuStrip menu;
-        private readonly Form panel;
+        private readonly ChromeForm panel;
         private readonly Label panelStatus, panelTime, panelDetail;
-        private readonly Color ink;
+        private readonly Palette palette;
         private readonly StatusTracker tracker = new StatusTracker();
         private Task<ProbeResult> pending;
         private DateTime nextProbe = DateTime.MinValue;
@@ -323,46 +324,42 @@ namespace HermesServerTray
             this.folder = folder;
             this.logPath = logPath;
             this.setupPath = setupPath;
-            bool highContrast = SystemInformation.HighContrast;
-            bool dark = !highContrast && object.Equals(Microsoft.Win32.Registry.GetValue(
-                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1), 0);
-            Color surface = highContrast ? SystemColors.Window : dark ? Color.FromArgb(13, 47, 134) : Color.FromArgb(248, 250, 255);
-            ink = highContrast ? SystemColors.WindowText : dark ? Color.FromArgb(255, 230, 203) : Color.FromArgb(23, 23, 26);
-            Color accent = highContrast ? SystemColors.Highlight : dark ? ink : Color.FromArgb(0, 83, 253);
+            palette = new Palette("System");
             window = new TrayWindow();
             menu = new ContextMenuStrip();
-            menu.Items.Add("Verificar agora", null, delegate { VerifyNow(); });
-            menu.Items.Add("Copiar endereço", null, delegate { CopyAddress(); });
-            menu.Items.Add("Abrir logs", null, delegate { OpenLogs(); });
-            menu.Items.Add("Abrir instalador", null, delegate { OpenInstaller(); });
+            menu.Items.Add("Check now", null, delegate { VerifyNow(); });
+            menu.Items.Add("Copy address", null, delegate { CopyAddress(); });
+            menu.Items.Add("Open logs", null, delegate { OpenLogs(); });
+            menu.Items.Add("Open setup", null, delegate { OpenInstaller(); });
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Sair do indicador", null, delegate { ExitThread(); });
-            panel = new Form {
-                Text = "Talaria", ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.FixedToolWindow,
+            menu.Items.Add("Exit indicator", null, delegate { ExitThread(); });
+            panel = new ChromeForm(false) {
+                Text = "Talaria", ShowInTaskbar = false, TopMost = true,
                 StartPosition = FormStartPosition.Manual, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                AutoScaleMode = AutoScaleMode.Dpi, BackColor = surface, ForeColor = ink, KeyPreview = true
+                BackColor = palette.Surface, ForeColor = palette.Ink
             };
             var layout = new FlowLayoutPanel {
                 AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.TopDown,
-                WrapContents = false, Padding = new Padding(16), Dock = DockStyle.Fill
+                WrapContents = false, Padding = new Padding(16, 8, 16, 16), Dock = DockStyle.Fill
             };
-            panelStatus = PanelLabel("Verificando", true);
-            if (!highContrast) panelStatus.ForeColor = accent;
-            panelTime = PanelLabel("Primeira verificação", false);
+            panelStatus = PanelLabel("Checking", true);
+            panelTime = PanelLabel("First check", false);
             panelDetail = PanelLabel("", false);
             layout.Controls.Add(panelStatus);
             layout.Controls.Add(PanelLabel(endpoint.Authority, false));
             layout.Controls.Add(panelTime);
             layout.Controls.Add(panelDetail);
-            var refresh = new Button { Text = "Verificar agora", AutoSize = true, Margin = new Padding(0, 10, 0, 0),
-                FlatStyle = FlatStyle.Flat, BackColor = accent,
-                ForeColor = highContrast ? SystemColors.HighlightText : dark ? surface : Color.White };
-            refresh.FlatAppearance.BorderSize = 0;
+            var refresh = new RoundedButton(palette, true) { Text = "Check now", Margin = new Padding(0, 10, 0, 0) };
             refresh.Click += delegate { VerifyNow(); };
             layout.Controls.Add(refresh);
             panel.Controls.Add(layout);
+            panel.Controls.Add(panel.Caption(palette, "Talaria", panel.Hide));
+            panel.AcceptButton = refresh;
             panel.Deactivate += delegate { panel.Hide(); };
             panel.KeyDown += delegate(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Escape) panel.Hide(); };
+            panel.FormClosing += delegate(object sender, FormClosingEventArgs e) {
+                if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; panel.Hide(); }
+            };
             window.ShowMenu += delegate { panel.Hide(); menu.Show(Anchor()); };
             window.ShowStatus += ShowStatus;
             RefreshIcon();
@@ -376,7 +373,7 @@ namespace HermesServerTray
             if (pending != null && pending.IsCompleted)
             {
                 ProbeResult result = pending.Status == TaskStatus.RanToCompletion ? pending.Result :
-                    new ProbeResult(ProbeKind.Failed, "A verificação não pôde ser concluída.");
+                    new ProbeResult(ProbeKind.Failed, "The check could not finish.");
                 pending = null;
                 tracker.Apply(result);
                 RefreshIcon();
@@ -392,7 +389,7 @@ namespace HermesServerTray
         {
             window.Display(tracker.State, "Talaria · " + tracker.Label + "\n" + endpoint.Authority);
             panelStatus.Text = tracker.Label;
-            panelTime.Text = tracker.CheckedAt.HasValue ? "Última verificação " + tracker.CheckedAt.Value.ToString("HH:mm:ss") : "Primeira verificação em andamento";
+            panelTime.Text = tracker.CheckedAt.HasValue ? "Last checked " + tracker.CheckedAt.Value.ToString("HH:mm:ss") : "Running the first check";
             panelDetail.Text = tracker.Detail;
             Rectangle bounds;
             string json = new JavaScriptSerializer().Serialize(new
@@ -435,32 +432,32 @@ namespace HermesServerTray
         private Label PanelLabel(string text, bool title)
         {
             return new Label { Text = text, AutoSize = true, MaximumSize = new Size(330, 0),
-                MinimumSize = new Size(245, 0), Margin = new Padding(0, 0, 0, 5), ForeColor = ink,
+                MinimumSize = new Size(245, 0), Margin = new Padding(0, 0, 0, 5), ForeColor = palette.Ink,
                 Font = new Font("Segoe UI", title ? 15 : 10, title ? FontStyle.Bold : FontStyle.Regular) };
         }
 
         private void VerifyNow()
         {
             if (pending == null) nextProbe = DateTime.MinValue;
-            panelTime.Text = "Verificação em andamento";
+            panelTime.Text = "Checking…";
         }
 
         private void CopyAddress()
         {
             try { Clipboard.SetText(endpoint.GetLeftPart(UriPartial.Authority)); }
-            catch (ExternalException) { MessageBox.Show("A área de transferência está ocupada. Tente novamente.", "Talaria"); }
+            catch (ExternalException) { ChromeForm.Prompt(palette, null, "Talaria", "The clipboard is busy. Try again.", "OK", false); }
         }
 
         private void OpenInstaller()
         {
             try { Process.Start(new ProcessStartInfo(setupPath) { UseShellExecute = true }); }
-            catch (Exception) { MessageBox.Show("Abra o instalador baixado para fazer a manutenção.", "Talaria"); }
+            catch (Exception) { ChromeForm.Prompt(palette, null, "Talaria", "Open the downloaded setup to manage Talaria.", "OK", false); }
         }
 
         private void OpenLogs()
         {
             try { Process.Start(new ProcessStartInfo(File.Exists(logPath) ? logPath : Path.GetDirectoryName(logPath)) { UseShellExecute = true }); }
-            catch (Exception) { MessageBox.Show("Não foi possível abrir os logs.", "Talaria"); }
+            catch (Exception) { ChromeForm.Prompt(palette, null, "Talaria", "Could not open the logs.", "OK", false); }
         }
 
         protected override void Dispose(bool disposing)

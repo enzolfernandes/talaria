@@ -107,7 +107,7 @@ try {
     New-Item -ItemType File -Path (Join-Path $custom 'existing-auth') | Out-Null
     New-Item -ItemType File -Path (Join-Path $custom 'unprotected') | Out-Null
     $refused = $false
-    try { $null = Start-SetupServer $mock $custom $testPort '' '' } catch { $refused = $_.Exception.Message -match 'acesso anônimo' }
+    try { $null = Start-SetupServer $mock $custom $testPort '' '' } catch { $refused = $_.Exception.Message -match 'anonymous access check' }
     Assert-Setup ($refused -and !(Get-SetupTask $script:TestServerTask) -and !(Test-Path -LiteralPath $script:Pending)) 'recusa de autenticacao incompleta e reversao da tarefa'
 } finally {
     $reserve.Stop()

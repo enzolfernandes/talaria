@@ -17,13 +17,13 @@ Talaria shows the status of your Hermes server in the Windows notification area.
 ## Install
 
 1. Use Windows 10 or 11 x64 and sign in to the account that runs Hermes.
-2. Download `Instalar-Talaria.exe` and optionally verify it against the SHA-256 checksum provided with the release. [Releases](https://github.com/enzolfernandes/talaria/releases)
+2. Download `Talaria-Setup.exe` and optionally verify it against the SHA-256 checksum provided with the release. [Latest release](https://github.com/enzolfernandes/talaria/releases/latest)
 3. Open the installer. It checks the native Hermes installation, the local Tailscale address, and the server. Use the action shown for any missing dependency or port conflict. [Hermes for Windows](https://hermes-agent.nousresearch.com/docs/user-guide/windows-native) · [Tailscale for Windows](https://tailscale.com/docs/install/windows)
-4. Once the installer verifies health, a login provider, and rejection of anonymous requests, select **Instalar indicador**. If Talaria creates credentials, it also signs in and ends that test session.
+4. Once the installer verifies health, a login provider, and rejection of anonymous requests, select **Install indicator**. If Talaria creates credentials, it also signs in and ends that test session.
 
 Click the winged sandal to see the address, status, and last check. Green means a valid health response. Yellow means Talaria is waiting or retrying. Red means three consecutive failed checks. Right-click to check now, copy the address, open logs or the installer, or exit the indicator.
 
-**Manutenção** in the installer offers repair and removal. Removing the indicator leaves the server running. **Reverter servidor** is available separately for a server created by Talaria.
+**Maintenance** in the installer offers repair and removal. Removing the indicator leaves the server running. **Revert server setup** is available separately for a server created by Talaria.
 
 ## Screenshots
 

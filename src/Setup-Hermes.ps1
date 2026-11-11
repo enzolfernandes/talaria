@@ -1,8 +1,6 @@
 param([switch]$CheckControls,[switch]$CheckLive,[string]$PreviewFile,[int]$PreviewWidth,[ValidateSet('System','Light','Dark')][string]$PreviewTheme='System')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-[Windows.Forms.Application]::EnableVisualStyles()
-[Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
 $script:CoreFile = Join-Path $PSScriptRoot 'Setup-Core.ps1'
 $script:Diagnosis = $null
 $script:ExeOverride = ''
@@ -11,20 +9,12 @@ $script:Job = $null
 $script:NeedsLogin = $false
 $script:IgnorePortChange = $false
 $script:Finished = $false
-$appearance = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -ErrorAction SilentlyContinue
-$dark = $PreviewTheme -eq 'Dark' -or ($PreviewTheme -eq 'System' -and $appearance -and $appearance.AppsUseLightTheme -eq 0)
-if ([Windows.Forms.SystemInformation]::HighContrast -and $PreviewTheme -eq 'System') {
-    $palette = @{ Surface=[Drawing.SystemColors]::Window; Panel=[Drawing.SystemColors]::Control; Ink=[Drawing.SystemColors]::WindowText
-        Border=[Drawing.SystemColors]::ControlText; Accent=[Drawing.SystemColors]::Highlight; OnAccent=[Drawing.SystemColors]::HighlightText }
-} else {
-    $tokens = if ($dark) { '#0d2f86','#12378f','#ffe6cb','#5475bb','#ffe6cb','#0d2f86' }
-        else { '#f8faff','#ffffff','#17171a','#c5cfe2','#0053fd','#ffffff' }
-    $palette = @{}
-    $names = 'Surface','Panel','Ink','Border','Accent','OnAccent'
-    for ($index = 0; $index -lt $names.Count; $index++) {
-        $palette[$names[$index]] = [Drawing.ColorTranslator]::FromHtml($tokens[$index])
-    }
-}
+$installer = Join-Path $PSScriptRoot 'Hermes.SetupLauncher.exe'
+$assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($installer))
+[Talaria.UI.ChromeForm]::EnablePerMonitorDpi()
+[Windows.Forms.Application]::EnableVisualStyles()
+[Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
+$palette = [Talaria.UI.Palette]::new($PreviewTheme)
 
 function New-Text([string]$Text, [int]$Size = 10, [bool]$Bold = $false) {
     $label = New-Object Windows.Forms.Label
@@ -38,21 +28,9 @@ function New-Text([string]$Text, [int]$Size = 10, [bool]$Bold = $false) {
 }
 
 function New-Button([string]$Text, [scriptblock]$Action, [bool]$Prominent = $false) {
-    $button = New-Object Windows.Forms.Button
+    $button = [Talaria.UI.RoundedButton]::new($palette,$Prominent)
     $button.Text = $Text
-    $button.AutoSize = $true
-    $button.MinimumSize = [Drawing.Size]::new(100,36)
     $button.Margin = [Windows.Forms.Padding]::new(0,0,8,0)
-    $button.Padding = [Windows.Forms.Padding]::new(9,0,9,0)
-    $button.FlatStyle = 'Flat'
-    $button.BackColor = $palette.Panel
-    $button.ForeColor = $palette.Ink
-    $button.FlatAppearance.BorderColor = $palette.Border
-    if ($Prominent) {
-        $button.FlatAppearance.BorderSize = 0
-        $button.BackColor = $palette.Accent
-        $button.ForeColor = $palette.OnAccent
-    }
     $button.Add_Click($Action)
     return $button
 }
@@ -67,17 +45,14 @@ function New-Flow([bool]$Vertical = $false) {
     return $flow
 }
 
-$form = New-Object Windows.Forms.Form
-$form.Text = 'Instalar Talaria'
+$form = [Talaria.UI.ChromeForm]::new($true)
+$form.Text = 'Talaria Setup'
 $form.StartPosition = 'CenterScreen'
-$form.ClientSize = [Drawing.Size]::new(740,510)
-$form.MinimumSize = [Drawing.Size]::new(605,470)
-$form.AutoScaleMode = 'Dpi'
+$form.ClientSize = [Drawing.Size]::new(740,575)
+$form.MinimumSize = [Drawing.Size]::new(555,460)
 $form.Font = [Drawing.Font]::new('Segoe UI',10)
 $form.BackColor = $palette.Surface
 $form.ForeColor = $palette.Ink
-$form.AutoScaleDimensions = [Drawing.SizeF]::new(96,96)
-$form.KeyPreview = $true
 
 $footer = New-Object Windows.Forms.TableLayoutPanel
 $footer.Dock = 'Bottom'
@@ -86,12 +61,12 @@ $footer.Padding = [Windows.Forms.Padding]::new(20,14,12,12)
 $footer.ColumnCount = 2
 $null = $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))
 $null = $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('AutoSize'))
-$footer.BackColor = $palette.Panel
+$footer.BackColor = $palette.Surface
 $secondary = New-Flow
-$verify = New-Button 'Verificar novamente' { Start-Work 'Diagnose' 'Verificando a instalação…' }
-$maintenance = New-Button 'Manutenção' { Show-Maintenance }
+$verify = New-Button 'Check again' { Start-Work 'Diagnose' 'Checking the installation…' }
+$maintenance = New-Button 'Maintenance' { Show-Maintenance }
 $secondary.Controls.AddRange(@($verify,$maintenance))
-$primary = New-Button 'Verificando…' { Invoke-Primary } $true
+$primary = New-Button 'Checking…' { Invoke-Primary } $true
 $footer.Controls.Add($secondary,0,0)
 $footer.Controls.Add($primary,1,0)
 
@@ -103,31 +78,27 @@ $body.Dock = 'Top'
 $body.AutoSize = $true
 $body.AutoSizeMode = 'GrowAndShrink'
 $body.ColumnCount = 1
-$body.Padding = [Windows.Forms.Padding]::new(24,18,24,12)
+$body.Padding = [Windows.Forms.Padding]::new(24,6,24,12)
 $header = New-Flow
-$installer = Join-Path $PSScriptRoot 'Hermes.SetupLauncher.exe'
-if (Test-Path -LiteralPath $installer) {
-    $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($installer))
-    $stream = $assembly.GetManifestResourceStream('brand-64.png')
-    if ($stream) {
-        $brand = New-Object Windows.Forms.PictureBox
-        $brand.Size = [Drawing.Size]::new(54,54)
-        $brand.Margin = [Windows.Forms.Padding]::new(0,1,12,0)
-        $brand.SizeMode = 'Zoom'
-        try {
-            $image = [Drawing.Image]::FromStream($stream)
-            try { $brand.Image = [Drawing.Bitmap]::new($image) } finally { $image.Dispose() }
-        } finally { $stream.Dispose() }
-        $header.Controls.Add($brand)
-        $brand.Add_Disposed({ if ($this.Image) { $this.Image.Dispose() } })
-    }
+$stream = $assembly.GetManifestResourceStream('brand-64.png')
+if ($stream) {
+    $brand = New-Object Windows.Forms.PictureBox
+    $brand.Size = [Drawing.Size]::new(54,54)
+    $brand.Margin = [Windows.Forms.Padding]::new(0,1,12,0)
+    $brand.SizeMode = 'Zoom'
+    try {
+        $image = [Drawing.Image]::FromStream($stream)
+        try { $brand.Image = [Drawing.Bitmap]::new($image) } finally { $image.Dispose() }
+    } finally { $stream.Dispose() }
+    $header.Controls.Add($brand)
+    $brand.Add_Disposed({ if ($this.Image) { $this.Image.Dispose() } })
 }
 $heading = New-Flow $true
 $title = New-Text 'TALARIA' 25 $true
 $title.ForeColor = $palette.Accent
 $title.Margin = [Windows.Forms.Padding]::new(0,0,0,2)
 $heading.Controls.Add($title)
-$heading.Controls.Add((New-Text 'Indicador do servidor Hermes'))
+$heading.Controls.Add((New-Text 'Hermes server indicator'))
 $header.Controls.Add($heading)
 $header.Margin = [Windows.Forms.Padding]::new(0,3,0,11)
 $body.Controls.Add($header)
@@ -138,9 +109,14 @@ function Add-StatusRow([string]$Title, [Windows.Forms.Label]$Detail, [Windows.Fo
     $row.AutoSize = $true
     $row.AutoSizeMode = 'GrowAndShrink'
     $row.ColumnCount = 2
-    $row.Padding = [Windows.Forms.Padding]::new(13,10,12,8)
-    $row.Margin = [Windows.Forms.Padding]::new(0,8,0,0)
-    $row.BackColor = $palette.Panel
+    $row.Padding = [Windows.Forms.Padding]::new(0,10,0,9)
+    $row.Margin = [Windows.Forms.Padding]::new(0)
+    $divider = New-Object Windows.Forms.Panel
+    $divider.Dock = 'Top'
+    $divider.Height = 1
+    $divider.Margin = [Windows.Forms.Padding]::new(0)
+    $divider.BackColor = $palette.Border
+    $body.Controls.Add($divider)
     $null = $row.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',115))
     $null = $row.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))
     $row.Controls.Add((New-Text $Title 11 $true),0,0)
@@ -153,25 +129,25 @@ function Add-StatusRow([string]$Title, [Windows.Forms.Label]$Detail, [Windows.Fo
 
 function Open-Link([string]$Url) {
     try { Start-Process -FilePath $Url }
-    catch { $message.Text = "Abra o endereço $Url" }
+    catch { $message.Text = "Open $Url" }
 }
 
 function Select-Hermes([bool]$Data) {
     if ($Data) {
         $dialog = New-Object Windows.Forms.FolderBrowserDialog
-        $dialog.Description = 'Selecione a pasta de dados do Hermes.'
+        $dialog.Description = 'Select the Hermes data folder.'
         $dialog.ShowNewFolderButton = $false
-        try { if ($dialog.ShowDialog($form) -eq 'OK') { $script:DataOverride=$dialog.SelectedPath; Start-Work 'Diagnose' 'Verificando a pasta de dados…' } }
+        try { if ($dialog.ShowDialog($form) -eq 'OK') { $script:DataOverride=$dialog.SelectedPath; Start-Work 'Diagnose' 'Checking the data folder…' } }
         finally { $dialog.Dispose() }
     } else {
         $dialog = New-Object Windows.Forms.OpenFileDialog
-        $dialog.Title = 'Selecione o executável do Hermes'
-        $dialog.Filter = 'Executável do Hermes (hermes.exe)|hermes.exe|Executáveis (*.exe)|*.exe'
+        $dialog.Title = 'Select the Hermes executable'
+        $dialog.Filter = 'Hermes executable (hermes.exe)|hermes.exe|Executables (*.exe)|*.exe'
         try {
             if ($dialog.ShowDialog($form) -eq 'OK') {
                 $script:ExeOverride=$dialog.FileName
                 $script:DataOverride=''
-                Start-Work 'Diagnose' 'Verificando o Hermes selecionado…'
+                Start-Work 'Diagnose' 'Checking the selected Hermes installation…'
             }
         } finally { $dialog.Dispose() }
     }
@@ -180,23 +156,23 @@ function Select-Hermes([bool]$Data) {
 function Open-Tailscale {
     if ($script:Diagnosis.Tailscale.App) {
         try { Start-Process -FilePath $script:Diagnosis.Tailscale.App -WindowStyle Normal }
-        catch { $message.Text = 'Abra o Tailscale pelo menu Iniciar e tente novamente.' }
-    } else { $message.Text = 'Abra o Tailscale pelo menu Iniciar, entre na conta e verifique novamente.' }
+        catch { $message.Text = 'Open Tailscale from the Start menu and try again.' }
+    } else { $message.Text = 'Open Tailscale from the Start menu, sign in, and check again.' }
 }
 
-$hermesStatus = New-Text 'Aguardando diagnóstico'
+$hermesStatus = New-Text 'Waiting for checks'
 $hermesActions = New-Flow
-$locate = New-Button 'Localizar Hermes' { Select-Hermes $false }
-$dataFolder = New-Button 'Pasta de dados' { Select-Hermes $true }
-$getHermes = New-Button 'Guia de instalação' { Open-Link 'https://hermes-agent.nousresearch.com/docs/user-guide/windows-native' }
+$locate = New-Button 'Locate Hermes' { Select-Hermes $false }
+$dataFolder = New-Button 'Data folder' { Select-Hermes $true }
+$getHermes = New-Button 'Installation guide' { Open-Link 'https://hermes-agent.nousresearch.com/docs/user-guide/windows-native' }
 $hermesActions.Controls.AddRange(@($locate,$dataFolder,$getHermes))
 Add-StatusRow 'Hermes' $hermesStatus $hermesActions
-$tailscaleStatus = New-Text 'Aguardando diagnóstico'
+$tailscaleStatus = New-Text 'Waiting for checks'
 Add-StatusRow 'Tailscale' $tailscaleStatus $null
 
-$serverStatus = New-Text 'Aguardando diagnóstico'
+$serverStatus = New-Text 'Waiting for checks'
 $connectionActions = New-Flow
-$portLabel = New-Text 'Porta'
+$portLabel = New-Text 'Port'
 $portLabel.Margin = [Windows.Forms.Padding]::new(0,7,8,0)
 $port = New-Object Windows.Forms.NumericUpDown
 $port.Minimum = 1
@@ -206,10 +182,10 @@ $port.Width = 88
 $port.BackColor = $palette.Surface
 $port.ForeColor = $palette.Ink
 $port.Margin = [Windows.Forms.Padding]::new(0,5,12,0)
-$port.AccessibleName = 'Porta do servidor Hermes'
-$authGuide = New-Button 'Guia de autenticação' { Open-Link 'https://hermes-agent.nousresearch.com/docs/user-guide/desktop#connecting-to-a-remote-backend' }
+$port.AccessibleName = 'Hermes server port'
+$authGuide = New-Button 'Authentication guide' { Open-Link 'https://hermes-agent.nousresearch.com/docs/user-guide/desktop#connecting-to-a-remote-backend' }
 $connectionActions.Controls.AddRange(@($portLabel,$port,$authGuide))
-Add-StatusRow 'Conexão' $serverStatus $connectionActions
+Add-StatusRow 'Connection' $serverStatus $connectionActions
 
 $message = New-Text ''
 $message.ForeColor = $palette.Accent
@@ -218,26 +194,27 @@ $body.Controls.Add($message)
 $scroll.Controls.Add($body)
 $form.Controls.Add($scroll)
 $form.Controls.Add($footer)
+$form.Controls.Add($form.Caption($palette,'Talaria Setup',$null))
 $form.AcceptButton = $primary
 $form.Add_Resize({
-    $width = [Math]::Max(300,$form.ClientSize.Width-195)
+    $width = [Math]::Max(220,$form.ClientSize.Width-[int](195*$form.DeviceDpi/96))
     foreach ($label in @($hermesStatus,$tailscaleStatus,$serverStatus,$message)) { $label.MaximumSize = [Drawing.Size]::new($width,0) }
 })
 
 function Get-PrimaryAction {
     $d = $script:Diagnosis
-    if ($script:Job) { return @{ Name='Busy'; Label='Aguarde…' } }
-    if (!$d) { return @{ Name='Diagnose'; Label='Testar conexão' } }
-    if ($d.Hermes.Code -eq 'Missing') { return @{ Name='Locate'; Label='Localizar Hermes' } }
-    if ($d.Hermes.Code -ne 'Ready') { return @{ Name='Data'; Label='Selecionar pasta de dados' } }
-    if ($d.Tailscale.Code -eq 'Missing') { return @{ Name='GetTailscale'; Label='Instalar Tailscale' } }
-    if ($d.Tailscale.Code -ne 'Ready') { return @{ Name='OpenTailscale'; Label='Abrir Tailscale' } }
-    if ($d.Server.Code -eq 'Unavailable') { return @{ Name='Server'; Label=$(if($script:NeedsLogin){'Configurar login'}else{'Configurar e iniciar'}) } }
+    if ($script:Job) { return @{ Name='Busy'; Label='Please wait…' } }
+    if (!$d) { return @{ Name='Diagnose'; Label='Test connection' } }
+    if ($d.Hermes.Code -eq 'Missing') { return @{ Name='Locate'; Label='Locate Hermes' } }
+    if ($d.Hermes.Code -ne 'Ready') { return @{ Name='Data'; Label='Select data folder' } }
+    if ($d.Tailscale.Code -eq 'Missing') { return @{ Name='GetTailscale'; Label='Install Tailscale' } }
+    if ($d.Tailscale.Code -ne 'Ready') { return @{ Name='OpenTailscale'; Label='Open Tailscale' } }
+    if ($d.Server.Code -eq 'Unavailable') { return @{ Name='Server'; Label=$(if($script:NeedsLogin){'Set up sign-in'}else{'Set up and start'}) } }
     if ($d.Server.Code -eq 'Ready') {
-        if ($script:Finished) { return @{ Name='Close'; Label='Concluir' } }
-        return @{ Name='Install'; Label=$(if($d.HasTray){'Atualizar indicador'}else{'Instalar indicador'}) }
+        if ($script:Finished) { return @{ Name='Close'; Label='Finish' } }
+        return @{ Name='Install'; Label=$(if($d.HasTray){'Update indicator'}else{'Install indicator'}) }
     }
-    return @{ Name='Diagnose'; Label='Testar conexão' }
+    return @{ Name='Diagnose'; Label='Test connection' }
 }
 
 function Invoke-Primary {
@@ -249,21 +226,21 @@ function Invoke-Primary {
         Server {
             if ($script:NeedsLogin) {
                 $login = Show-Login
-                if ($login) { Start-Work 'Server' 'Testando o novo login…' $false $login.Username $login.Password }
-            } else { Start-Work 'Server' 'Iniciando o servidor e verificando o login…' }
+                if ($login) { Start-Work 'Server' 'Testing the new sign-in…' $false $login.Username $login.Password }
+            } else { Start-Work 'Server' 'Starting the server and checking sign-in…' }
         }
-        Install { Start-Work 'Install' 'Instalando o indicador na bandeja…' }
+        Install { Start-Work 'Install' 'Installing the tray indicator…' }
         Close { $form.Close() }
-        Diagnose { Start-Work 'Diagnose' 'Testando a conexão…' }
+        Diagnose { Start-Work 'Diagnose' 'Testing the connection…' }
     }
 }
 
 function Show-Login {
-    $dialog = New-Object Windows.Forms.Form
-    $dialog.Text = 'Configurar login do Hermes'
+    $dialog = [Talaria.UI.ChromeForm]::new($false)
+    $dialog.Text = 'Set up Hermes sign-in'
     $dialog.StartPosition = 'CenterParent'
-    $dialog.FormBorderStyle = 'FixedDialog'
-    $dialog.ClientSize = [Drawing.Size]::new(480,255)
+    $dialog.ShowInTaskbar = $false
+    $dialog.ClientSize = [Drawing.Size]::new(480,275)
     $dialog.Font = $form.Font
     $dialog.BackColor = $palette.Surface
     $dialog.MaximizeBox = $false
@@ -275,7 +252,7 @@ function Show-Login {
     $null = $layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Absolute',130))
     $null = $layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100))
     $boxes = @()
-    foreach ($name in @('Usuário','Senha','Confirmar senha')) {
+    foreach ($name in @('Username','Password','Confirm password')) {
         $label = New-Text $name
         $box = New-Object Windows.Forms.TextBox
         $box.Dock = 'Top'
@@ -288,17 +265,18 @@ function Show-Login {
         $layout.Controls.Add($box,1,$boxes.Count)
         $boxes += $box
     }
-    $note = New-Text 'Use pelo menos 12 caracteres. A senha fica protegida nesta conta.'
+    $note = New-Text 'Use at least 12 characters. The password is protected for this Windows account.'
     $note.MaximumSize = [Drawing.Size]::new(420,0)
     $layout.Controls.Add($note,0,3)
     $layout.SetColumnSpan($note,2)
     $actions = New-Flow
-    $ok = New-Button 'Configurar' { $dialog.DialogResult='OK' } $true
-    $cancel = New-Button 'Cancelar' { $dialog.DialogResult='Cancel' }
+    $ok = New-Button 'Set up' { $dialog.DialogResult='OK' } $true
+    $cancel = New-Button 'Cancel' { $dialog.DialogResult='Cancel' }
     $actions.Controls.AddRange(@($ok,$cancel))
     $layout.Controls.Add($actions,0,4)
     $layout.SetColumnSpan($actions,2)
     $dialog.Controls.Add($layout)
+    $dialog.Controls.Add($dialog.Caption($palette,$dialog.Text,$null))
     $dialog.AcceptButton = $ok
     $dialog.CancelButton = $cancel
     try {
@@ -308,46 +286,46 @@ function Show-Login {
                 return @{ Username=$boxes[0].Text; Password=$boxes[1].Text }
             }
             $dialog.DialogResult = 'None'
-            $note.Text = 'Confira o usuário e confirme uma senha de pelo menos 12 caracteres.'
+            $note.Text = 'Check the username and confirm a password of at least 12 characters.'
         }
     } finally { foreach ($box in $boxes) { $box.Clear() }; $dialog.Dispose() }
 }
 
 function Show-Maintenance {
-    $dialog = New-Object Windows.Forms.Form
-    $dialog.Text = 'Manutenção do Talaria'
+    $dialog = [Talaria.UI.ChromeForm]::new($false)
+    $dialog.Text = 'Talaria Maintenance'
     $dialog.StartPosition = 'CenterParent'
-    $dialog.FormBorderStyle = 'FixedDialog'
+    $dialog.ShowInTaskbar = $false
     $dialog.Font = $form.Font
     $dialog.BackColor = $palette.Surface
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
-    $dialog.AutoSize = $true
-    $dialog.AutoSizeMode = 'GrowAndShrink'
+    $dialog.ClientSize = [Drawing.Size]::new(350,225)
     $layout = New-Flow $true
+    $layout.Dock = 'Fill'
     $layout.Padding = [Windows.Forms.Padding]::new(17)
     $script:MaintenanceAction = ''
-    $layout.Controls.Add((New-Text 'Manutenção' 16 $true))
-    $repair = New-Button 'Reparar indicador' { $script:MaintenanceAction='Repair'; $dialog.Close() }
-    $remove = New-Button 'Remover indicador' { $script:MaintenanceAction='RemoveTray'; $dialog.Close() }
-    $revert = New-Button 'Reverter servidor' { $script:MaintenanceAction='RemoveServer'; $dialog.Close() }
+    $repair = New-Button 'Repair indicator' { $script:MaintenanceAction='Repair'; $dialog.Close() }
+    $remove = New-Button 'Remove indicator' { $script:MaintenanceAction='RemoveTray'; $dialog.Close() }
+    $revert = New-Button 'Revert server setup' { $script:MaintenanceAction='RemoveServer'; $dialog.Close() }
     $repair.Enabled = $script:Diagnosis.HasTray -and $script:Diagnosis.Server.Code -eq 'Ready'
     $remove.Enabled = [bool]$script:Diagnosis.HasTray
     $revert.Enabled = [bool]$script:Diagnosis.ManagedServer
     foreach ($button in @($repair,$remove,$revert)) { $button.Margin = [Windows.Forms.Padding]::new(0,3,0,4) }
     $layout.Controls.AddRange(@($repair,$remove,$revert))
     $dialog.Controls.Add($layout)
+    $dialog.Controls.Add($dialog.Caption($palette,$dialog.Text,$null))
     try { $null=$dialog.ShowDialog($form) } finally { $dialog.Dispose() }
     switch ($script:MaintenanceAction) {
-        Repair { Start-Work 'Repair' 'Verificando e reparando o indicador…' }
+        Repair { Start-Work 'Repair' 'Checking and repairing the indicator…' }
         RemoveTray {
-            if ([Windows.Forms.MessageBox]::Show($form,'Remover o indicador e sua inicialização no Windows?','Remover indicador','YesNo','Question') -eq 'Yes') {
-                Start-Work 'RemoveTray' 'Removendo o indicador…'
+            if ([Talaria.UI.ChromeForm]::Prompt($palette,$form,'Remove indicator','Remove the indicator and stop it from starting with Windows?','Remove',$true)) {
+                Start-Work 'RemoveTray' 'Removing the indicator…'
             }
         }
         RemoveServer {
-            if ([Windows.Forms.MessageBox]::Show($form,'Reverter a configuração encerra o servidor criado pelo Talaria e interrompe conexões ativas.','Reverter servidor','YesNo','Warning') -eq 'Yes') {
-                Start-Work 'RemoveServer' 'Revertendo o servidor…'
+            if ([Talaria.UI.ChromeForm]::Prompt($palette,$form,'Revert server setup','Reverting setup stops the server created by Talaria and disconnects active clients.','Revert',$true)) {
+                Start-Work 'RemoveServer' 'Reverting server setup…'
             }
         }
     }
@@ -409,18 +387,19 @@ $timer.Add_Tick({
     $script:Job = $null
     try {
         $output = @($job.Worker.EndInvoke($job.Result))
-        if (!$output.Count -or !$output[-1].Diagnosis) { throw 'O diagnóstico não foi concluído.' }
+        if (!$output.Count -or !$output[-1].Diagnosis) { throw [ApplicationException]::new('The diagnosis did not finish.') }
         $result = $output[-1]
         if ($job.Operation -eq 'Server') { $script:NeedsLogin = $result.Result.Code -eq 'NeedsLogin' }
         $script:Finished = $job.Operation -in @('Install','Repair') -and $result.Result.Code -eq 'Ready'
         Show-Diagnosis $result.Diagnosis
         if ($result.Result.Message) { $message.Text = $result.Result.Message }
-        elseif ($result.Diagnosis.Server.Code -eq 'Ready') { $message.Text = 'Conexão e proteção verificadas. Você já pode instalar o indicador.' }
-        else { $message.Text = 'Resolva a pendência indicada e verifique novamente.' }
+        elseif ($result.Diagnosis.Server.Code -eq 'Ready') { $message.Text = 'Connection and sign-in protection verified. The indicator is ready to install.' }
+        else { $message.Text = 'Resolve the issue shown above and check again.' }
     } catch {
-        $errorMessage = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
-        if ($errorMessage -match '(?i)password|secret|token') { $errorMessage = 'Confira a configuração de login e tente novamente.' }
-        $message.Text = $errorMessage
+        $message.Text = 'An unexpected error occurred. Check that Hermes and Tailscale are available, then try again.'
+        for ($failure = $_.Exception; $failure; $failure = $failure.InnerException) {
+            if ($failure -is [ApplicationException]) { $message.Text = $failure.Message; break }
+        }
         $script:Diagnosis = $null
     } finally { $job.Worker.Dispose(); Update-Controls }
 })
@@ -430,12 +409,12 @@ $port.Add_ValueChanged({
     $script:Diagnosis = $null
     $script:NeedsLogin = $false
     $script:Finished = $false
-    $serverStatus.Text = 'Porta alterada. Teste a conexão novamente.'
+    $serverStatus.Text = 'Port changed. Test the connection again.'
     Update-Controls
 })
 $form.Add_FormClosing({ param($sender,$eventArgs); if ($script:Job) { $eventArgs.Cancel=$true } })
 $form.Add_KeyDown({ param($sender,$eventArgs); if ($eventArgs.KeyCode -eq 'Escape' -and !$script:Job) { $form.Close() } })
-if (!$CheckControls) { $form.Add_Shown({ Start-Work 'Diagnose' 'Localizando o Hermes e o Tailscale…' $true }) }
+if (!$CheckControls) { $form.Add_Shown({ Start-Work 'Diagnose' 'Looking for Hermes and Tailscale…' $true }) }
 
 try {
     if ($CheckControls) {
@@ -444,22 +423,23 @@ try {
             @('Ready','Ready','Conflict','Diagnose'),@('Ready','Ready','Unprotected','Diagnose'),
             @('Ready','Ready','NoProvider','Diagnose'),@('Ready','Ready','Unavailable','Server'),@('Ready','Ready','Ready','Install'))) {
             Show-Diagnosis @{
-                Hermes=@{ Code=$case[0]; Message='Hermes localizado.'; Data='C:\Apps\Hermes' }
-                Tailscale=@{ Code=$case[1]; Message='Tailscale conectado.' }
-                Server=@{ Code=$case[2]; Message='Conexão protegida verificada.' }
+                Hermes=@{ Code=$case[0]; Message='Hermes found.'; Data='C:\Apps\Hermes' }
+                Tailscale=@{ Code=$case[1]; Message='Tailscale connected.' }
+                Server=@{ Code=$case[2]; Message='Protected connection verified.' }
                 Endpoint='http://100.64.0.10:9119'; Port=9119; HasTray=$false; ManagedServer=$false
             }
             if ((Get-PrimaryAction).Name -ne $case[3]) { throw "Unexpected primary action in $($case -join '/')." }
         }
         if ($form.AcceptButton -ne $primary -or $port.AccessibleName -eq '') { throw 'Keyboard entry points are missing.' }
+        $message.Text = 'Connection and sign-in protection verified. The indicator is ready to install.'
         if ($PreviewWidth -gt 0) { $form.Width = $PreviewWidth }
         if ($CheckLive -or $PreviewFile) { $form.Show(); [Windows.Forms.Application]::DoEvents() }
         if ($CheckLive) {
             $timer.Start()
-            Start-Work 'Diagnose' 'Verificando a instalação atual…' $true
+            Start-Work 'Diagnose' 'Checking the current installation…' $true
             $deadline = [DateTime]::UtcNow.AddSeconds(18)
             while ($script:Job -and [DateTime]::UtcNow -lt $deadline) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 50 }
-            if ($script:Job -or (Get-PrimaryAction).Name -ne 'Install' -or !$script:Diagnosis.HasTray) { throw 'O diagnóstico real não foi confirmado.' }
+            if ($script:Job -or (Get-PrimaryAction).Name -ne 'Install' -or !$script:Diagnosis.HasTray) { throw 'The live diagnosis could not be verified.' }
             Write-Output 'PASS live diagnostic and upgrade action'
         }
         if ($PreviewFile) {

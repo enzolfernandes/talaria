@@ -45,9 +45,10 @@ foreach ($size in @(16,20,24,32,64)) {
 }
 
 $tray = Join-Path $stage 'Hermes.ServerTray.exe'
+$ui = Join-Path $repo 'src/Talaria.Ui.cs'
 $arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/codepage:65001',('/out:'+$tray),
     '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll')
-& $compiler @arguments @icons (Join-Path $repo 'src/Hermes.ServerTray.cs')
+& $compiler @arguments @icons $ui (Join-Path $repo 'src/Hermes.ServerTray.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Talaria tray compilation failed.' }
 
 $scripts = [ordered]@{ 'Setup-Hermes.ps1'='Setup-Hermes.ps1'; 'Setup-Core.ps1'='Setup-Core.ps1'; 'PortableSupervisor.ps1'='RemoteSupervisor.ps1' }
@@ -61,11 +62,12 @@ foreach ($name in $scripts.Keys) {
     if ($errors) { throw ($errors | Out-String) }
     $resources += "/resource:$path,$name"
 }
-$installer = Join-Path $OutputDirectory 'Instalar-Talaria.exe'
-$arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/codepage:65001',('/out:'+$installer),'/reference:System.Windows.Forms.dll')
-& $compiler @arguments @resources (Join-Path $repo 'src/Hermes.SetupLauncher.cs')
+$installer = Join-Path $OutputDirectory 'Talaria-Setup.exe'
+$arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/codepage:65001',('/out:'+$installer),
+    '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll')
+& $compiler @arguments @resources $ui (Join-Path $repo 'src/Hermes.SetupLauncher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Talaria installer compilation failed.' }
 Copy-Item -LiteralPath $installer -Destination (Join-Path $stage 'Hermes.SetupLauncher.exe') -Force
-"$((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant())  Instalar-Talaria.exe" |
+"$((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant())  Talaria-Setup.exe" |
     Set-Content -LiteralPath (Join-Path $OutputDirectory 'SHA256SUMS.txt') -Encoding ASCII
 Get-Item -LiteralPath $installer
