@@ -1,0 +1,17 @@
+/build/
+/dist/
+/logs/
+/backups/
+/reports/
+*.exe
+*.log
+*.local.*
+.env
+.env.*
+!.env.example
+config.json
+status.json
+pending.json
+credentials*.json
+*.wsb
+Thumbs.db
