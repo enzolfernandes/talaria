@@ -1,6 +1,14 @@
 # Talaria
 
+**A hermes auto-server**
+
+<img src="assets/sandal.svg" alt="Ícone da sandália alada do Talaria" width="160" height="160">
+
 [Read in English](README.md)
+
+## Objetivo
+
+Facilitar o uso de múltiplos conectores com um mesmo gateway do Hermes no dia a dia.
 
 O Talaria mostra o estado do servidor Hermes na bandeja do Windows, perto do relógio. Ele reaproveita um servidor autenticado ou configura o `hermes serve` para iniciar silenciosamente ao entrar na conta. Instale o Talaria no computador que hospeda o Hermes.
 

@@ -1,6 +1,14 @@
 # Talaria
 
+**A hermes auto-server**
+
+<img src="assets/sandal.svg" alt="Talaria winged sandal icon" width="160" height="160">
+
 [Leia em português](README.pt-BR.md)
+
+## Objective
+
+Make it easier to use multiple connectors with a single Hermes gateway day to day.
 
 Talaria shows the status of your Hermes server in the Windows notification area. It can reuse an authenticated server or configure `hermes serve` to start silently when you sign in. Talaria runs on the computer hosting Hermes.
 
