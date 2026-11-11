@@ -34,19 +34,73 @@ function Get-ExeCandidate([string]$Command, [string[]]$Paths) {
     if ($Command) {
         $entry = Get-Command $Command -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($entry) { return $entry.Source }
+        # A vendor installer can update the user PATH while Talaria is still running.
+        foreach ($directory in ([Environment]::GetEnvironmentVariable('Path','User') -split ';')) {
+            $expanded = [Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))
+            if (![IO.Path]::IsPathRooted($expanded)) { continue }
+            $path = Join-Path $expanded $Command
+            if (Test-Path -LiteralPath $path -PathType Leaf) { return (Resolve-Path -LiteralPath $path).Path }
+        }
     }
 }
 
-function Get-HermesInstall([string]$ExeOverride, [string]$DataOverride) {
+function Get-HermesDesktopPackage {
+    try {
+        Get-AppxPackage -Name 'NousResearch*' -ErrorAction Stop | Where-Object {
+            ($_.Name -eq 'NousResearchInc.HermesAgent' -and $_.Publisher -eq 'CN=EE6D86E4-606F-4E38-B940-AD7248C9D519') -or
+            ($_.Name -match '^NousResearch\.Hermes(?:Bundled)?(?:Canary|Channel[a-f0-9]+)?$' -and
+                $_.Publisher -match '^CN=Nous Research Inc\.(?:,|$)')
+        } | Select-Object -First 1
+    } catch { }
+}
+
+function Get-HermesDesktop($Hermes, $Package) {
+    if ($Package) {
+        return @{ Code='Ready'; Message='Hermes Desktop found as a Windows app package.' }
+    }
+    $nativeHomes = @($Hermes.Data, $env:HERMES_HOME, [Environment]::GetEnvironmentVariable('HERMES_HOME','User'),
+        (Join-Path $env:LOCALAPPDATA 'hermes'), (Join-Path $env:USERPROFILE '.hermes')) |
+        Where-Object { $_ -and [IO.Path]::IsPathRooted($_) } | Select-Object -Unique
+    foreach ($homeDirectory in $nativeHomes) {
+        foreach ($output in @('win-unpacked','win-ia32-unpacked','win-arm64-unpacked')) {
+            $desktop = Join-Path $homeDirectory "hermes-agent/apps/desktop/release/$output/Hermes.exe"
+            if (Test-Path -LiteralPath $desktop -PathType Leaf) {
+                return @{ Code='Ready'; Message='Hermes Desktop found.' }
+            }
+        }
+    }
+    # The official source installer also creates this shortcut for custom checkout paths.
+    try {
+        $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Hermes.lnk'
+        if (Test-Path -LiteralPath $shortcut -PathType Leaf) {
+            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+            if ($target -match '[\\/]apps[\\/]desktop[\\/]release[\\/]win(?:-ia32|-arm64)?-unpacked[\\/]Hermes\.exe$' -and
+                (Test-Path -LiteralPath $target -PathType Leaf)) {
+                return @{ Code='Ready'; Message='Hermes Desktop found.' }
+            }
+        }
+    } catch { }
+    return @{ Code='Missing'; Message='Hermes Desktop was not found.' }
+}
+
+function Get-HermesInstall([string]$ExeOverride, [string]$DataOverride, $Package) {
     $standard = Join-Path $env:LOCALAPPDATA 'hermes'
     $userSetting = [Environment]::GetEnvironmentVariable('HERMES_HOME', 'User')
     $configured = @($env:HERMES_HOME, $userSetting) | Where-Object { $_ -and [IO.Path]::IsPathRooted($_) } | Select-Object -First 1
     $candidates = @()
     if ($configured) { $candidates += Join-Path $configured 'bin\hermes.exe' }
     $candidates += Join-Path $standard 'bin\hermes.exe'
+    $aliasPath = Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps/hermes.exe'
+    if ($Package) { $candidates += $aliasPath }
     if ($ExeOverride) { $exe = Get-ExeCandidate '' @($ExeOverride) }
     else { $exe = Get-ExeCandidate 'hermes.exe' $candidates }
-    if (!$exe) { return @{ Code='Missing'; Message='Hermes was not found.' } }
+    $isAlias = $exe -ieq $aliasPath
+    if (!$exe) {
+        if ($Package -and !$ExeOverride) {
+            return @{ Code='AliasDisabled'; Message='Enable hermes.exe in Windows App execution aliases, then check again.' }
+        }
+        return @{ Code='Missing'; Message='Hermes command line was not found.' }
+    }
 
     $parent = Split-Path $exe -Parent
     $inferred = if ((Split-Path $parent -Leaf) -eq 'bin') { Split-Path $parent -Parent } else { $null }
@@ -61,6 +115,11 @@ function Get-HermesInstall([string]$ExeOverride, [string]$DataOverride) {
             (Test-Path -LiteralPath (Join-Path $directory 'bin\hermes.exe'))) {
             return @{ Code='Ready'; Exe=$exe; Data=(Resolve-Path -LiteralPath $directory).Path; Message='Hermes found.' }
         }
+    }
+    if ($isAlias -and $Package -and !$DataOverride) {
+        # The packaged CLI can create the default data folder on first use.
+        $data = if ($configured) { $configured } else { $standard }
+        return @{ Code='Ready'; Exe=$exe; Data=$data; Message='Hermes command line found.' }
     }
     return @{ Code='MissingData'; Exe=$exe; Message='Select the Hermes data folder.' }
 }
@@ -338,7 +397,21 @@ function Find-SetupPort([string]$Address, [int]$Port) {
 }
 
 function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$SuggestPort) {
-    $hermes = Get-HermesInstall $ExeOverride $DataOverride
+    $package = Get-HermesDesktopPackage
+    $hermes = Get-HermesInstall $ExeOverride $DataOverride $package
+    $desktop = Get-HermesDesktop $hermes $package
+    if ($hermes.Code -eq 'Ready') {
+        $version = try { Invoke-SetupCommand $hermes.Exe '--version' } catch { $null }
+        if ($version -match '(?i)\bHermes\s+Agent\b') {
+            $hermes.Message = 'Hermes command line found.'
+        } elseif ($package -and $hermes.Exe -ieq (Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps/hermes.exe')) {
+            $hermes.Code = 'AliasDisabled'
+            $hermes.Message = 'Enable hermes.exe in Windows App execution aliases, then check again.'
+        } else {
+            $hermes.Code = 'Unavailable'
+            $hermes.Message = 'The selected Hermes command line did not respond. Repair it or locate another installation.'
+        }
+    }
     $tailscale = Get-TailscaleInstall
     $server = @{ Code='Pending'; Message='Complete the Hermes and Tailscale checks.' }
     $endpoint = $null
@@ -357,7 +430,7 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
         }
     }
     $trayExe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
-    return @{ Hermes=$hermes; Tailscale=$tailscale; Server=$server; Endpoint=$endpoint; Port=$Port;
+    return @{ Hermes=$hermes; Desktop=$desktop; Tailscale=$tailscale; Server=$server; Endpoint=$endpoint; Port=$Port;
         HasTray=(Test-SetupTask (Get-SetupTask $script:TrayTask) $trayExe); ManagedServer=[bool](Get-ManagedServer) }
 }
 

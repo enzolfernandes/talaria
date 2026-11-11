@@ -20,8 +20,9 @@ O Talaria roda no computador que hospeda o Hermes e mostra o estado do servidor 
 
 1. Use o Windows 10 ou 11 x64 e entre na conta que executa o Hermes.
 2. Baixe `Talaria-Setup.exe`. Você pode conferir o arquivo pelo checksum SHA-256 publicado com a versão. [Versão mais recente](https://github.com/enzolfernandes/talaria/releases/latest)
-3. Abra o instalador. Ele verifica a instalação nativa do Hermes, o endereço local do Tailscale e o servidor. Use a ação sugerida para resolver dependências ou conflitos de porta. [Hermes para Windows](https://hermes-agent.nousresearch.com/docs/user-guide/windows-native) · [Tailscale para Windows](https://tailscale.com/docs/install/windows)
-4. Selecione **Install indicator** quando o instalador confirmar a saúde do servidor, a presença de um provedor de login e a recusa de acesso anônimo. Se o Talaria criar credenciais, ele também fará login e encerrará a sessão de teste.
+3. Abra o instalador. Se faltar o Hermes Desktop ou o Tailscale, use a opção **Install** correspondente para abrir o instalador oficial. Se a CLI do Hermes já funcionar, você pode instalar o Desktop nessa mesma instalação ou escolher **Continue without Desktop**. [Hermes para Windows](https://hermes-agent.nousresearch.com/docs/user-guide/windows-native) · [Tailscale para Windows](https://tailscale.com/docs/install/windows)
+4. Abra o Tailscale e entre na conta quando solicitado. O Talaria verifica se a máquina recebeu um endereço do Tailscale. Use **Check again** após concluir uma instalação externa ou reiniciar o Windows.
+5. Configure o servidor se o instalador solicitar. O Talaria reaproveita um servidor saudável e autenticado e as tarefas de início compatíveis. Selecione **Install indicator** após as verificações de saúde e autenticação. Se o Talaria criar credenciais, ele também fará login e encerrará a sessão de teste.
 
 Clique na sandália alada para ver o endereço, o estado e a última verificação. Verde indica uma resposta válida. Amarelo indica espera ou nova tentativa. Vermelho indica três falhas consecutivas. Clique com o botão direito para verificar agora, copiar o endereço, abrir os logs ou o instalador, ou sair do indicador.
 

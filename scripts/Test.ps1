@@ -26,6 +26,8 @@ foreach ($size in @(16,20,24,32)) {
 Write-Output 'PASS all tray icon sizes and states'
 
 $shell = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe'
+& $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repo 'tests/Test-SetupDependencies.ps1') -Stage $stage
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation tests failed.' }
 & $shell -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File (Join-Path $stage 'Setup-Hermes.ps1') -CheckControls
 if ($LASTEXITCODE -ne 0) { throw 'Installer UI test failed.' }
 

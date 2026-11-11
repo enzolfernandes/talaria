@@ -9,12 +9,12 @@ using System.Windows.Forms;
 using Talaria.UI;
 
 [assembly: AssemblyTitle("Talaria Setup")]
-[assembly: AssemblyVersion("0.1.3.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
 
 internal static class SetupLauncher
 {
     private static readonly string[] Payload = {
-        "Setup-Hermes.ps1", "Setup-Core.ps1", "PortableSupervisor.ps1", "Hermes.ServerTray.exe"
+        "Setup-Hermes.ps1", "Setup-Core.ps1", "Setup-Dependencies.ps1", "PortableSupervisor.ps1", "Hermes.ServerTray.exe"
     };
 
     [STAThread]

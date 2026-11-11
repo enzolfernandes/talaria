@@ -8,7 +8,10 @@ $script:DataOverride = ''
 $script:Job = $null
 $script:NeedsLogin = $false
 $script:IgnorePortChange = $false
+$script:PortEdited = $false
 $script:Finished = $false
+$script:SkipDesktop = $false
+$script:NextTailscaleCheck = $null
 $installer = Join-Path $PSScriptRoot 'Hermes.SetupLauncher.exe'
 $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($installer))
 [Talaria.UI.ChromeForm]::EnablePerMonitorDpi()
@@ -63,7 +66,7 @@ $null = $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('Percent',100)
 $null = $footer.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new('AutoSize'))
 $footer.BackColor = $palette.Surface
 $secondary = New-Flow
-$verify = New-Button 'Check again' { Start-Work 'Diagnose' 'Checking the installation…' }
+$verify = New-Button 'Check again' { Start-Work 'Diagnose' 'Checking the installation…' (!$script:PortEdited) }
 $maintenance = New-Button 'Maintenance' { Show-Maintenance }
 $secondary.Controls.AddRange(@($verify,$maintenance))
 $primary = New-Button 'Checking…' { Invoke-Primary } $true
@@ -154,10 +157,12 @@ function Select-Hermes([bool]$Data) {
 }
 
 function Open-Tailscale {
+    $message.Text = 'Choose Log in in the Tailscale tray menu. Talaria will check the connection automatically.'
     if ($script:Diagnosis.Tailscale.App) {
         try { Start-Process -FilePath $script:Diagnosis.Tailscale.App -WindowStyle Normal }
         catch { $message.Text = 'Open Tailscale from the Start menu and try again.' }
     } else { $message.Text = 'Open Tailscale from the Start menu, sign in, and check again.' }
+    $script:NextTailscaleCheck = [DateTime]::UtcNow.AddSeconds(4)
 }
 
 $hermesStatus = New-Text 'Waiting for checks'
@@ -166,9 +171,18 @@ $locate = New-Button 'Locate Hermes' { Select-Hermes $false }
 $dataFolder = New-Button 'Data folder' { Select-Hermes $true }
 $getHermes = New-Button 'Installation guide' { Open-Link 'https://hermes-agent.nousresearch.com/docs/user-guide/windows-native' }
 $hermesActions.Controls.AddRange(@($locate,$dataFolder,$getHermes))
-Add-StatusRow 'Hermes' $hermesStatus $hermesActions
+$continueWithoutDesktop = New-Button 'Continue without Desktop' {
+    $script:SkipDesktop = $true
+    Update-Controls
+}
+$hermesOptions = New-Flow $true
+$hermesOptions.Controls.AddRange(@($hermesActions,$continueWithoutDesktop))
+Add-StatusRow 'Hermes' $hermesStatus $hermesOptions
 $tailscaleStatus = New-Text 'Waiting for checks'
-Add-StatusRow 'Tailscale' $tailscaleStatus $null
+$tailscaleOptions = New-Flow
+$tailscaleGuide = New-Button 'Installation guide' { Open-Link 'https://tailscale.com/docs/install/windows' }
+$tailscaleOptions.Controls.Add($tailscaleGuide)
+Add-StatusRow 'Tailscale' $tailscaleStatus $tailscaleOptions
 
 $serverStatus = New-Text 'Waiting for checks'
 $connectionActions = New-Flow
@@ -205,9 +219,16 @@ function Get-PrimaryAction {
     $d = $script:Diagnosis
     if ($script:Job) { return @{ Name='Busy'; Label='Please wait…' } }
     if (!$d) { return @{ Name='Diagnose'; Label='Test connection' } }
-    if ($d.Hermes.Code -eq 'Missing') { return @{ Name='Locate'; Label='Locate Hermes' } }
-    if ($d.Hermes.Code -ne 'Ready') { return @{ Name='Data'; Label='Select data folder' } }
-    if ($d.Tailscale.Code -eq 'Missing') { return @{ Name='GetTailscale'; Label='Install Tailscale' } }
+    if ($d.Hermes.Code -eq 'AliasDisabled') { return @{ Name='Alias'; Label='Open app alias settings' } }
+    if ($d.Hermes.Code -eq 'MissingData') { return @{ Name='Data'; Label='Select data folder' } }
+    if ($d.Hermes.Code -eq 'Missing' -and $d.Desktop.Code -eq 'Missing' -and !$script:ExeOverride) {
+        return @{ Name='InstallHermes'; Label='Install Hermes Desktop' }
+    }
+    if ($d.Hermes.Code -ne 'Ready') { return @{ Name='Locate'; Label='Locate Hermes' } }
+    if ($d.Desktop.Code -eq 'Missing' -and !$script:SkipDesktop) {
+        return @{ Name='InstallHermes'; Label='Install Hermes Desktop' }
+    }
+    if ($d.Tailscale.Code -eq 'Missing') { return @{ Name='InstallTailscale'; Label='Install Tailscale' } }
     if ($d.Tailscale.Code -ne 'Ready') { return @{ Name='OpenTailscale'; Label='Open Tailscale' } }
     if ($d.Server.Code -eq 'Unavailable') { return @{ Name='Server'; Label=$(if($script:NeedsLogin){'Set up sign-in'}else{'Set up and start'}) } }
     if ($d.Server.Code -eq 'Ready') {
@@ -221,7 +242,12 @@ function Invoke-Primary {
     switch ((Get-PrimaryAction).Name) {
         Locate { Select-Hermes $false }
         Data { Select-Hermes $true }
-        GetTailscale { Open-Link 'https://tailscale.com/docs/install/windows' }
+        Alias { Open-Link 'ms-settings:appsfeatures-appexecutionalias' }
+        InstallHermes {
+            $progress = if ($script:Diagnosis.Hermes.Code -eq 'Ready') { 'Building Hermes Desktop…' } else { 'Opening the official Hermes installer…' }
+            Start-Work 'InstallHermes' $progress (!$script:PortEdited)
+        }
+        InstallTailscale { Start-Work 'InstallTailscale' 'Opening the official Tailscale installer…' (!$script:PortEdited) }
         OpenTailscale { Open-Tailscale }
         Server {
             if ($script:NeedsLogin) {
@@ -231,7 +257,7 @@ function Invoke-Primary {
         }
         Install { Start-Work 'Install' 'Installing the tray indicator…' }
         Close { $form.Close() }
-        Diagnose { Start-Work 'Diagnose' 'Testing the connection…' }
+        Diagnose { Start-Work 'Diagnose' 'Testing the connection…' (!$script:PortEdited) }
     }
 }
 
@@ -334,8 +360,12 @@ function Show-Maintenance {
 function Update-Controls {
     $busy = [bool]$script:Job
     $d = $script:Diagnosis
-    foreach ($control in @($locate,$dataFolder,$getHermes,$verify,$port,$authGuide)) { $control.Enabled = !$busy }
-    $getHermes.Visible = !$d -or $d.Hermes.Code -ne 'Ready'
+    foreach ($control in @($locate,$dataFolder,$getHermes,$continueWithoutDesktop,$tailscaleGuide,$verify,$port,$authGuide)) {
+        $control.Enabled = !$busy
+    }
+    $getHermes.Visible = $d -and ($d.Hermes.Code -ne 'Ready' -or ($d.Desktop.Code -eq 'Missing' -and !$script:SkipDesktop))
+    $continueWithoutDesktop.Visible = $d.Hermes.Code -eq 'Ready' -and $d.Desktop.Code -eq 'Missing' -and !$script:SkipDesktop
+    $tailscaleGuide.Visible = $d.Tailscale.Code -eq 'Missing'
     $authGuide.Visible = $d.Server.Code -in @('NoProvider','Unprotected') -or $script:NeedsLogin
     $maintenance.Enabled = !$busy -and ($d.HasTray -or $d.ManagedServer)
     $primary.Enabled = !$busy
@@ -347,7 +377,10 @@ function Show-Diagnosis($Result) {
     $script:Diagnosis = $Result
     $script:IgnorePortChange = $true
     try { $port.Value = $Result.Port } finally { $script:IgnorePortChange = $false }
-    $hermesStatus.Text = if ($Result.Hermes.Code -eq 'Ready') { $Result.Hermes.Message + "`n" + $Result.Hermes.Data } else { $Result.Hermes.Message }
+    $hermesStatus.Text = if ($Result.Desktop.Code -eq 'Ready' -and $Result.Hermes.Code -eq 'Ready') {
+        'Hermes Desktop and command line found.'
+    } else { $Result.Desktop.Message + "`n" + $Result.Hermes.Message }
+    if ($Result.Hermes.Code -eq 'Ready') { $hermesStatus.Text += "`n" + $Result.Hermes.Data }
     $tailscaleStatus.Text = $Result.Tailscale.Message
     $serverStatus.Text = if ($Result.Endpoint) { $Result.Endpoint + "`n" + $Result.Server.Message } else { $Result.Server.Message }
     Update-Controls
@@ -356,12 +389,33 @@ function Show-Diagnosis($Result) {
 function Start-Work([string]$Operation,[string]$Progress,[bool]$Suggest=$false,[string]$Username='',[string]$Password='') {
     if ($script:Job) { return }
     $script:Finished = $false
-    $message.Text = $Progress
+    if ($Progress) { $message.Text = $Progress }
     $worker = [PowerShell]::Create()
     $null = $worker.AddScript({
         param($Core,$Op,$SelectedExe,$SelectedData,$SelectedPort,$SuggestPort,$LoginUser,$LoginPassword)
         . $Core
+        if ($Op -eq 'CheckTailscale') {
+            if ((Get-TailscaleInstall).Code -ne 'Ready') { return @{ WaitingForTailscale=$true } }
+        }
         if (Test-Path -LiteralPath $script:Pending) { Undo-SetupTransaction }
+        if ($Op -in @('InstallHermes','InstallTailscale')) {
+            . (Join-Path (Split-Path $Core -Parent) 'Setup-Dependencies.ps1')
+            $name = if ($Op -eq 'InstallHermes') { 'HermesDesktop' } else { 'Tailscale' }
+            $label = if ($Op -eq 'InstallHermes') { 'Hermes Desktop' } else { 'Tailscale' }
+            $before = Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $false
+            $errorMessage = $null
+            $result = $null
+            try { $result = Install-SetupDependency $name $before }
+            catch [ApplicationException] { $errorMessage = $_.Exception.Message }
+            $after = Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $SuggestPort
+            $available = if ($Op -eq 'InstallHermes') { $after.Desktop.Code -eq 'Ready' } else { $after.Tailscale.Code -ne 'Missing' }
+            $messageText = if ($errorMessage) { $errorMessage }
+                elseif ($result.ExitCode -in @(1641,3010)) { 'Windows needs to restart. Reopen Talaria after restarting and select Check again.' }
+                elseif ($available -and $after.Tailscale.Code -eq 'Disconnected' -and $Op -eq 'InstallTailscale') { 'Open Tailscale and sign in. Talaria will check the connection automatically.' }
+                elseif ($available) { "$label is available. Continue with the next step." }
+                else { "$label is still missing. If you cancelled setup or it did not finish, you can try again." }
+            return @{ Result=@{ Code='Dependency'; Message=$messageText }; Diagnosis=$after }
+        }
         $result = switch ($Op) {
             Server { Start-SetupServer $SelectedExe $SelectedData $SelectedPort $LoginUser $LoginPassword }
             Install { Install-SetupTray $SelectedExe $SelectedData $SelectedPort }
@@ -382,16 +436,29 @@ function Start-Work([string]$Operation,[string]$Progress,[bool]$Suggest=$false,[
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 200
 $timer.Add_Tick({
-    if (!$script:Job -or !$script:Job.Result.IsCompleted) { return }
+    if (!$script:Job) {
+        if ($script:NextTailscaleCheck -and [DateTime]::UtcNow -ge $script:NextTailscaleCheck) {
+            $script:NextTailscaleCheck = $null
+            Start-Work 'CheckTailscale' '' (!$script:PortEdited)
+        }
+        return
+    }
+    if (!$script:Job.Result.IsCompleted) { return }
     $job = $script:Job
     $script:Job = $null
     try {
         $output = @($job.Worker.EndInvoke($job.Result))
+        if ($output.Count -and $output[-1].WaitingForTailscale) {
+            $script:NextTailscaleCheck = [DateTime]::UtcNow.AddSeconds(4)
+            return
+        }
         if (!$output.Count -or !$output[-1].Diagnosis) { throw [ApplicationException]::new('The diagnosis did not finish.') }
         $result = $output[-1]
         if ($job.Operation -eq 'Server') { $script:NeedsLogin = $result.Result.Code -eq 'NeedsLogin' }
         $script:Finished = $job.Operation -in @('Install','Repair') -and $result.Result.Code -eq 'Ready'
         Show-Diagnosis $result.Diagnosis
+        if ($result.Diagnosis.Tailscale.Code -ne 'Disconnected') { $script:NextTailscaleCheck = $null }
+        elseif ($job.Operation -eq 'InstallTailscale') { $script:NextTailscaleCheck = [DateTime]::UtcNow.AddSeconds(4) }
         if ($result.Result.Message) { $message.Text = $result.Result.Message }
         elseif ($result.Diagnosis.Server.Code -eq 'Ready') { $message.Text = 'Connection and sign-in protection verified. The indicator is ready to install.' }
         else { $message.Text = 'Resolve the issue shown above and check again.' }
@@ -406,6 +473,7 @@ $timer.Add_Tick({
 
 $port.Add_ValueChanged({
     if ($script:IgnorePortChange -or $script:Job) { return }
+    $script:PortEdited = $true
     $script:Diagnosis = $null
     $script:NeedsLogin = $false
     $script:Finished = $false
@@ -418,17 +486,24 @@ if (!$CheckControls) { $form.Add_Shown({ Start-Work 'Diagnose' 'Looking for Herm
 
 try {
     if ($CheckControls) {
-        foreach ($case in @(@('Missing','Missing','Pending','Locate'),@('MissingData','Ready','Pending','Data'),
-            @('Ready','Missing','Pending','GetTailscale'),@('Ready','Disconnected','Pending','OpenTailscale'),
-            @('Ready','Ready','Conflict','Diagnose'),@('Ready','Ready','Unprotected','Diagnose'),
-            @('Ready','Ready','NoProvider','Diagnose'),@('Ready','Ready','Unavailable','Server'),@('Ready','Ready','Ready','Install'))) {
+        foreach ($case in @(@('Missing','Missing','Missing','Pending','InstallHermes'),@('AliasDisabled','Ready','Ready','Pending','Alias'),
+            @('MissingData','Ready','Ready','Pending','Data'),@('Ready','Missing','Ready','Ready','InstallHermes'),
+            @('Ready','Ready','Missing','Pending','InstallTailscale'),@('Ready','Ready','Disconnected','Pending','OpenTailscale'),
+            @('Ready','Ready','Ready','Conflict','Diagnose'),@('Ready','Ready','Ready','Unprotected','Diagnose'),
+            @('Ready','Ready','Ready','NoProvider','Diagnose'),@('Ready','Ready','Ready','Unavailable','Server'),@('Ready','Ready','Ready','Ready','Install'))) {
             Show-Diagnosis @{
                 Hermes=@{ Code=$case[0]; Message='Hermes found.'; Data='C:\Apps\Hermes' }
-                Tailscale=@{ Code=$case[1]; Message='Tailscale connected.' }
-                Server=@{ Code=$case[2]; Message='Protected connection verified.' }
+                Desktop=@{ Code=$case[1]; Message='Hermes Desktop found.' }
+                Tailscale=@{ Code=$case[2]; Message='Tailscale connected.' }
+                Server=@{ Code=$case[3]; Message='Protected connection verified.' }
                 Endpoint='http://100.64.0.10:9119'; Port=9119; HasTray=$false; ManagedServer=$false
             }
-            if ((Get-PrimaryAction).Name -ne $case[3]) { throw "Unexpected primary action in $($case -join '/')." }
+            if ((Get-PrimaryAction).Name -ne $case[4]) { throw "Unexpected primary action in $($case -join '/')." }
+            if ($case[0] -eq 'Ready' -and $case[1] -eq 'Missing') {
+                $script:SkipDesktop = $true
+                if ((Get-PrimaryAction).Name -ne 'Install') { throw 'CLI-only setup could not continue.' }
+                $script:SkipDesktop = $false
+            }
         }
         if ($form.AcceptButton -ne $primary -or $port.AccessibleName -eq '') { throw 'Keyboard entry points are missing.' }
         $message.Text = 'Connection and sign-in protection verified. The indicator is ready to install.'

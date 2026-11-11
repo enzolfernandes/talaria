@@ -51,7 +51,12 @@ $arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/codepag
 & $compiler @arguments @icons $ui (Join-Path $repo 'src/Hermes.ServerTray.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Talaria tray compilation failed.' }
 
-$scripts = [ordered]@{ 'Setup-Hermes.ps1'='Setup-Hermes.ps1'; 'Setup-Core.ps1'='Setup-Core.ps1'; 'PortableSupervisor.ps1'='RemoteSupervisor.ps1' }
+$scripts = [ordered]@{
+    'Setup-Hermes.ps1'='Setup-Hermes.ps1'
+    'Setup-Core.ps1'='Setup-Core.ps1'
+    'Setup-Dependencies.ps1'='Setup-Dependencies.ps1'
+    'PortableSupervisor.ps1'='RemoteSupervisor.ps1'
+}
 $brand = Join-Path $build 'brand-64.png'
 $resources = @("/resource:$tray,Hermes.ServerTray.exe","/resource:$brand,brand-64.png")
 foreach ($name in $scripts.Keys) {

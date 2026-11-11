@@ -20,8 +20,9 @@ Talaria runs on the computer hosting Hermes and shows the server's status in the
 
 1. Use Windows 10 or 11 x64 and sign in to the account that runs Hermes.
 2. Download `Talaria-Setup.exe` and optionally verify it against the SHA-256 checksum provided with the release. [Latest release](https://github.com/enzolfernandes/talaria/releases/latest)
-3. Open the installer. It checks the native Hermes installation, the local Tailscale address, and the server. Use the action shown for any missing dependency or port conflict. [Hermes for Windows](https://hermes-agent.nousresearch.com/docs/user-guide/windows-native) · [Tailscale for Windows](https://tailscale.com/docs/install/windows)
-4. Once the installer verifies health, a login provider, and rejection of anonymous requests, select **Install indicator**. If Talaria creates credentials, it also signs in and ends that test session.
+3. Open the installer. If Hermes Desktop or Tailscale is missing, use the matching **Install** action to open the official installer. If you already have a working Hermes CLI, you can build Desktop in that installation or select **Continue without Desktop**. [Hermes for Windows](https://hermes-agent.nousresearch.com/docs/user-guide/windows-native) · [Tailscale for Windows](https://tailscale.com/docs/install/windows)
+4. Open Tailscale and sign in when prompted. Talaria checks for a local Tailscale address. Use **Check again** after completing an external setup or restarting Windows.
+5. Configure the server if prompted. Talaria reuses a healthy authenticated server and compatible login tasks. Select **Install indicator** after the health and authentication checks pass. If Talaria creates credentials, it also signs in and ends that test session.
 
 Click the winged sandal to see the address, status, and last check. Green means a valid health response. Yellow means Talaria is waiting or retrying. Red means three consecutive failed checks. Right-click to check now, copy the address, open logs or the installer, or exit the indicator.
 
