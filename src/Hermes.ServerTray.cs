@@ -16,7 +16,8 @@ using Talaria.UI;
 using Timer = System.Windows.Forms.Timer;
 
 [assembly: System.Reflection.AssemblyTitle("Talaria")]
-[assembly: System.Reflection.AssemblyVersion("0.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.2.1.0")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Test-ServerTray")]
 
 namespace HermesServerTray
 {
@@ -110,6 +111,7 @@ namespace HermesServerTray
         public string Detail { get; private set; }
         public int Failures { get; private set; }
         public DateTimeOffset? CheckedAt { get; private set; }
+        internal int CheckIntervalSeconds { get { return State == TrayState.Online ? 300 : 15; } }
 
         public StatusTracker()
         {
@@ -143,10 +145,11 @@ namespace HermesServerTray
         }
     }
 
+    internal enum IconCommand : uint { Add = 0, Modify = 1, Delete = 2, SetVersion = 4 }
+
     internal sealed class TrayWindow : NativeWindow, IDisposable
     {
         private const int Callback = 0x8001;
-        private const uint Add = 0, Modify = 1, Delete = 2, SetVersion = 4;
         private const uint IconId = 1;
         private readonly int taskbarCreated;
         private readonly Dictionary<string, IntPtr> icons = new Dictionary<string, IntPtr>();
@@ -186,20 +189,32 @@ namespace HermesServerTray
 
         public void Display(TrayState nextState, string nextTooltip)
         {
-            int size = TaskbarIconSize();
-            if (Registered && state == nextState && tooltip == nextTooltip && size == iconSize) return;
             state = nextState;
             tooltip = nextTooltip;
-            iconSize = size;
-            NotificationData data = Data();
-            if (Registered && Shell_NotifyIcon(Modify, ref data)) return;
-            Registered = Shell_NotifyIcon(Add, ref data);
-            version4 = false;
-            if (Registered)
+            iconSize = TaskbarIconSize();
+            Registered = PublishIcon(Notify, Registered, ref version4);
+        }
+
+        internal static bool PublishIcon(Func<IconCommand, bool> notify, bool registered, ref bool version4)
+        {
+            // Explorer can still own the icon after an earlier update returned false.
+            if (notify(IconCommand.Modify))
             {
-                data.TimeoutOrVersion = 4;
-                version4 = Shell_NotifyIcon(SetVersion, ref data);
+                if (!registered) version4 = notify(IconCommand.SetVersion);
+                return true;
             }
+
+            bool added = notify(IconCommand.Add);
+            if (!added && notify(IconCommand.Delete)) added = notify(IconCommand.Add);
+            version4 = added && notify(IconCommand.SetVersion);
+            return added;
+        }
+
+        private bool Notify(IconCommand command)
+        {
+            NotificationData data = Data();
+            if (command == IconCommand.SetVersion) data.TimeoutOrVersion = 4;
+            return Shell_NotifyIcon((uint)command, ref data);
         }
 
         private static int TaskbarIconSize()
@@ -230,7 +245,6 @@ namespace HermesServerTray
             if (message.Msg == taskbarCreated && tooltip != null)
             {
                 Registered = false;
-                Display(state, tooltip);
             }
             else if (message.Msg == Callback)
             {
@@ -245,12 +259,8 @@ namespace HermesServerTray
 
         public void Dispose()
         {
-            if (Registered)
-            {
-                NotificationData data = Data();
-                Shell_NotifyIcon(Delete, ref data);
-                Registered = false;
-            }
+            if (Handle != IntPtr.Zero && tooltip != null) Notify(IconCommand.Delete);
+            Registered = false;
             if (Handle != IntPtr.Zero) DestroyHandle();
             foreach (IntPtr icon in icons.Values) DestroyIcon(icon);
             icons.Clear();
@@ -315,8 +325,11 @@ namespace HermesServerTray
         private readonly Label panelStatus, panelTime, panelDetail;
         private readonly Palette palette;
         private readonly StatusTracker tracker = new StatusTracker();
+        private readonly Stopwatch clock = Stopwatch.StartNew();
         private Task<ProbeResult> pending;
-        private DateTime nextProbe = DateTime.MinValue;
+        private TimeSpan probeStartedAt;
+        private TimeSpan nextProbe;
+        private TimeSpan nextIconRetry;
 
         public TrayContext(Uri endpoint, string folder, string logPath, string setupPath)
         {
@@ -376,27 +389,39 @@ namespace HermesServerTray
                     new ProbeResult(ProbeKind.Failed, "The check could not finish.");
                 pending = null;
                 tracker.Apply(result);
+                nextProbe = probeStartedAt + TimeSpan.FromSeconds(tracker.CheckIntervalSeconds);
                 RefreshIcon();
             }
-            if (pending == null && DateTime.UtcNow >= nextProbe)
+            else if (!window.Registered && clock.Elapsed >= nextIconRetry)
             {
-                nextProbe = DateTime.UtcNow.AddSeconds(5);
+                PublishStatus();
+            }
+            if (pending == null && clock.Elapsed >= nextProbe)
+            {
+                probeStartedAt = clock.Elapsed;
                 pending = Task.Factory.StartNew(delegate { return HealthProbe.Check(endpoint); });
             }
         }
 
         private void RefreshIcon()
         {
-            window.Display(tracker.State, "Talaria · " + tracker.Label + "\n" + endpoint.Authority);
             panelStatus.Text = tracker.Label;
             panelTime.Text = tracker.CheckedAt.HasValue ? "Last checked " + tracker.CheckedAt.Value.ToString("HH:mm:ss") : "Running the first check";
             panelDetail.Text = tracker.Detail;
+            PublishStatus();
+        }
+
+        private void PublishStatus()
+        {
+            window.Display(tracker.State, "Talaria · " + tracker.Label + "\n" + endpoint.Authority);
+            nextIconRetry = clock.Elapsed + TimeSpan.FromSeconds(2);
             Rectangle bounds;
             string json = new JavaScriptSerializer().Serialize(new
             {
                 State = tracker.State.ToString(), tracker.Label, tracker.Detail, tracker.Failures,
                 Endpoint = endpoint.GetLeftPart(UriPartial.Authority),
                 CheckedAt = tracker.CheckedAt.HasValue ? tracker.CheckedAt.Value.ToString("o") : null,
+                tracker.CheckIntervalSeconds,
                 ShellRegistered = window.Registered, ShellIconRectResult = window.IconRect(out bounds),
                 ProcessId = Process.GetCurrentProcess().Id
             });
@@ -438,7 +463,7 @@ namespace HermesServerTray
 
         private void VerifyNow()
         {
-            if (pending == null) nextProbe = DateTime.MinValue;
+            if (pending == null) nextProbe = TimeSpan.Zero;
             panelTime.Text = "Checking…";
         }
 

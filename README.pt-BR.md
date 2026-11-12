@@ -30,7 +30,7 @@ Se o instalador oficial do Hermes informar que não encontrou o WebView2, instal
 
 Se o instalador oficial parar com `WinError 3` ao copiar um arquivo cujo caminho ultrapassa 260 caracteres, habilite os **caminhos longos do Win32** no Windows e reabra o instalador. [Documentação da Microsoft sobre caminhos longos](https://learn.microsoft.com/pt-br/windows/win32/fileio/maximum-file-path-limitation#enable-long-paths-in-windows-10-version-1607-and-later)
 
-Clique na sandália alada para ver o endereço, o estado e a última verificação. Verde indica uma resposta válida. Amarelo indica espera ou nova tentativa. Vermelho indica três falhas consecutivas. Clique com o botão direito para verificar agora, copiar o endereço, abrir os logs ou o instalador, ou sair do indicador.
+Clique na sandália alada para ver o endereço, o estado e a última verificação. Verde indica uma resposta válida. Amarelo indica espera ou nova tentativa. Vermelho indica três falhas consecutivas. O Talaria verifica a cada cinco minutos enquanto o servidor está online e tenta novamente a cada 15 segundos enquanto aguarda a conexão ou o servidor está indisponível. Clique com o botão direito para verificar agora, copiar o endereço, abrir os logs ou o instalador, ou sair do indicador.
 
 Abra **Maintenance** no instalador para reparar ou remover o indicador. Remover o indicador mantém o servidor em execução. **Revert server setup** está disponível separadamente quando o Talaria criou o servidor.
 

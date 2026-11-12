@@ -7,7 +7,7 @@ $tray = Join-Path $stage 'Hermes.ServerTray.exe'
 if (!(Test-Path -LiteralPath $tray)) { throw 'Build Talaria first.' }
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $test = Join-Path $stage 'Test-ServerTray.exe'
-& $compiler /nologo /codepage:65001 ('/reference:'+$tray) ('/out:'+$test) (Join-Path $repo 'tests/Test-ServerTray.cs')
+& $compiler /nologo /codepage:65001 /reference:System.Windows.Forms.dll ('/reference:'+$tray) ('/out:'+$test) (Join-Path $repo 'tests/Test-ServerTray.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Tray test compilation failed.' }
 & $test
 if ($LASTEXITCODE -ne 0) { throw 'Tray health test failed.' }

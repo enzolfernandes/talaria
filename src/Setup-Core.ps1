@@ -595,7 +595,8 @@ function Get-TrayStatus([string]$Endpoint) {
     try {
         $state = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         if ($state.Endpoint -ne $Endpoint -or !$state.ShellRegistered -or $state.State -ne 'Online') { return }
-        if (([DateTimeOffset]::Now - [DateTimeOffset]::Parse($state.CheckedAt)).TotalSeconds -gt 20) { return }
+        $checkWindow = if ($state.CheckIntervalSeconds -eq 300) { 320 } else { 20 }
+        if (([DateTimeOffset]::Now - [DateTimeOffset]::Parse($state.CheckedAt)).TotalSeconds -gt $checkWindow) { return }
         $process = Get-Process -Id $state.ProcessId -ErrorAction SilentlyContinue
         if ($process.Path -ieq (Join-Path $script:TrayDir 'Hermes.ServerTray.exe') -and
             $process.SessionId -eq (Get-Process -Id $PID).SessionId) { return $state }
