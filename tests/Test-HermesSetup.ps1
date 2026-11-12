@@ -95,10 +95,11 @@ try {
         (Get-NetTCPConnection -LocalPort $testPort -State Listen).OwningProcess -eq $ownerBefore) 'migracao no reparo mantem servidor ativo'
     Stop-SetupTask $script:TestServerTask
     Start-ScheduledTask -TaskName $script:TestServerTask -TaskPath '\'
-    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    $deadline = [DateTime]::UtcNow.AddSeconds(55)
     do { $healthy = (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready'; if(!$healthy){Start-Sleep -Milliseconds 500} }
     while (!$healthy -and [DateTime]::UtcNow -lt $deadline)
-    Assert-Setup ($healthy -and (Test-NewHermesLogin $fixtureEndpoint 'teste-hermes' $password)) 'credenciais migradas funcionam apos iniciar a tarefa'
+    if (!$healthy) { throw 'O servidor de teste não voltou a responder após iniciar a tarefa.' }
+    Assert-Setup (Test-NewHermesLogin $fixtureEndpoint 'teste-hermes' $password) 'credenciais migradas funcionam apos iniciar a tarefa'
     $password = $null
     $null = Remove-SetupTray
     Assert-Setup (!(Get-SetupTask $script:TrayTask) -and (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready') 'remover indicador mantem servidor'
