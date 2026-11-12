@@ -25,7 +25,7 @@ internal static class TestHermes
         string password = Environment.GetEnvironmentVariable("HERMES_DASHBOARD_BASIC_AUTH_PASSWORD");
         if (String.IsNullOrEmpty(password) && !File.Exists("existing-auth"))
         {
-            Console.Error.WriteLine("non-loopback bind now ALWAYS requires an auth provider");
+            Console.Error.WriteLine("Refusing to bind the dashboard: no auth providers are registered.");
             Environment.Exit(1);
         }
         TcpListener listener = new TcpListener(IPAddress.Parse(args[2]), Int32.Parse(args[4]));

@@ -560,7 +560,7 @@ function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Po
             $missingLogin = $probe.Code -eq 'NoProvider'
             if (!$missingLogin -and (Test-Path -LiteralPath $logPath)) {
                 $missingLogin = [bool](Get-Content -LiteralPath $logPath -Tail 25 -ErrorAction SilentlyContinue |
-                    Select-String -Pattern 'always requires an auth provider|no auth providers registered')
+                    Select-String -Pattern 'always requires an auth provider|no auth providers (?:are )?registered')
             }
             if ($missingLogin) {
                 if ($Password) { throw [ApplicationException]::new('Hermes rejected the new sign-in provider. Check the server diagnosis.') }
