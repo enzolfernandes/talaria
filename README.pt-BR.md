@@ -18,6 +18,8 @@ O Talaria roda no computador que hospeda o Hermes e mostra o estado do servidor 
 
 ## Instalação
 
+A validação da v0.2.0 abrangeu o Windows 10 x64 e incluiu o acionamento manual das tarefas do servidor e do indicador pelo Agendador de Tarefas. A inicialização após um novo logon e o fluxo completo de instalação no Windows 11 seguem sem validação.
+
 1. Use o Windows 10 ou 11 x64 e entre na conta que executa o Hermes.
 2. Baixe `Talaria-Setup.exe`. Você pode conferir o arquivo pelo checksum SHA-256 publicado com a versão. [Versão mais recente](https://github.com/enzolfernandes/talaria/releases/latest)
 3. Abra o instalador. Se faltar o Hermes Desktop ou o Tailscale, use a opção **Install** correspondente para abrir o instalador oficial. Se a CLI do Hermes já funcionar, você pode instalar o Desktop nessa mesma instalação ou escolher **Continue without Desktop**. [Hermes para Windows](https://hermes-agent.nousresearch.com/docs/user-guide/windows-native) · [Tailscale para Windows](https://tailscale.com/docs/install/windows)
