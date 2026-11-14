@@ -229,6 +229,7 @@ function Get-PrimaryAction {
         return @{ Name='InstallHermes'; Label='Install Hermes Desktop' }
     }
     if ($d.Tailscale.Code -eq 'Missing') { return @{ Name='InstallTailscale'; Label='Install Tailscale' } }
+    if ($d.Tailscale.Code -eq 'AddressChanged') { return @{ Name='Diagnose'; Label='Check again' } }
     if ($d.Tailscale.Code -ne 'Ready') { return @{ Name='OpenTailscale'; Label='Open Tailscale' } }
     if ($d.Server.Code -eq 'Unavailable') { return @{ Name='Server'; Label=$(if($script:NeedsLogin){'Set up sign-in'}else{'Set up and start'}) } }
     if ($d.Server.Code -eq 'Ready') {
@@ -326,7 +327,7 @@ function Show-Maintenance {
     $dialog.BackColor = $palette.Surface
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
-    $dialog.ClientSize = [Drawing.Size]::new(350,225)
+    $dialog.ClientSize = [Drawing.Size]::new(350,270)
     $layout = New-Flow $true
     $layout.Dock = 'Fill'
     $layout.Padding = [Windows.Forms.Padding]::new(17)
@@ -334,16 +335,23 @@ function Show-Maintenance {
     $repair = New-Button 'Repair indicator' { $script:MaintenanceAction='Repair'; $dialog.Close() }
     $remove = New-Button 'Remove indicator' { $script:MaintenanceAction='RemoveTray'; $dialog.Close() }
     $revert = New-Button 'Revert server setup' { $script:MaintenanceAction='RemoveServer'; $dialog.Close() }
+    $recovery = New-Button 'Enable server recovery' { $script:MaintenanceAction='EnableRecovery'; $dialog.Close() }
+    $recovery.Visible = [bool]$script:Diagnosis.CanEnableRecovery
     $repair.Enabled = $script:Diagnosis.HasTray -and $script:Diagnosis.Server.Code -eq 'Ready'
     $remove.Enabled = [bool]$script:Diagnosis.HasTray
     $revert.Enabled = [bool]$script:Diagnosis.ManagedServer
-    foreach ($button in @($repair,$remove,$revert)) { $button.Margin = [Windows.Forms.Padding]::new(0,3,0,4) }
-    $layout.Controls.AddRange(@($repair,$remove,$revert))
+    foreach ($button in @($repair,$recovery,$remove,$revert)) { $button.Margin = [Windows.Forms.Padding]::new(0,3,0,4) }
+    $layout.Controls.AddRange(@($repair,$recovery,$remove,$revert))
     $dialog.Controls.Add($layout)
     $dialog.Controls.Add($dialog.Caption($palette,$dialog.Text,$null))
     try { $null=$dialog.ShowDialog($form) } finally { $dialog.Dispose() }
     switch ($script:MaintenanceAction) {
         Repair { Start-Work 'Repair' 'Checking and repairing the indicator…' }
+        EnableRecovery {
+            if ([Talaria.UI.ChromeForm]::Prompt($palette,$form,'Enable server recovery','Talaria will restart the local Hermes server and verify the protected connection. Finish any active work before continuing.','Enable recovery',$true)) {
+                Start-Work 'EnableRecovery' 'Upgrading the server supervisor…'
+            }
+        }
         RemoveTray {
             if ([Talaria.UI.ChromeForm]::Prompt($palette,$form,'Remove indicator','Remove the indicator and stop it from starting with Windows?','Remove',$true)) {
                 Start-Work 'RemoveTray' 'Removing the indicator…'
@@ -367,7 +375,7 @@ function Update-Controls {
     $continueWithoutDesktop.Visible = $d.Hermes.Code -eq 'Ready' -and $d.Desktop.Code -eq 'Missing' -and !$script:SkipDesktop
     $tailscaleGuide.Visible = $d.Tailscale.Code -eq 'Missing'
     $authGuide.Visible = $d.Server.Code -in @('NoProvider','Unprotected') -or $script:NeedsLogin
-    $maintenance.Enabled = !$busy -and ($d.HasTray -or $d.ManagedServer)
+    $maintenance.Enabled = !$busy -and ($d.HasTray -or $d.ManagedServer -or $d.CanEnableRecovery)
     $primary.Enabled = !$busy
     $primary.Text = (Get-PrimaryAction).Label
     $form.UseWaitCursor = $busy
@@ -420,6 +428,7 @@ function Start-Work([string]$Operation,[string]$Progress,[bool]$Suggest=$false,[
             Server { Start-SetupServer $SelectedExe $SelectedData $SelectedPort $LoginUser $LoginPassword }
             Install { Install-SetupTray $SelectedExe $SelectedData $SelectedPort }
             Repair { Install-SetupTray $SelectedExe $SelectedData $SelectedPort $true }
+            EnableRecovery { Enable-SetupServerRecovery $SelectedPort }
             RemoveTray { Remove-SetupTray }
             RemoveServer { Remove-SetupServer }
             Diagnose { @{ Code='Diagnosis'; Message='' } }

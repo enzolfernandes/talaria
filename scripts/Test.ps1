@@ -31,6 +31,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependency installation tests failed.' }
 & $shell -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File (Join-Path $stage 'Setup-Hermes.ps1') -CheckControls
 if ($LASTEXITCODE -ne 0) { throw 'Installer UI test failed.' }
 
+$supervisor = Get-Content -LiteralPath (Join-Path $stage 'PortableSupervisor.ps1') -Raw
+$runnerSource = [regex]::Match($supervisor, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")
+if (!$runnerSource.Success) { throw 'Supervisor runner source was not found.' }
+Add-Type -TypeDefinition $runnerSource.Groups[1].Value
+$now = [DateTimeOffset]::UtcNow
+if ([HermesRemoteRunner]::RecoveryAllowed($now,@($now.AddMinutes(-4))) -or
+    [HermesRemoteRunner]::RecoveryAllowed($now,@($now.AddMinutes(-5),$now.AddMinutes(-15),$now.AddMinutes(-25))) -or
+    ![HermesRemoteRunner]::RecoveryAllowed($now,@($now.AddMinutes(-5),$now.AddMinutes(-15),$now.AddMinutes(-30)))) {
+    throw 'Automatic restart cooldown or rolling limit is incorrect.'
+}
+'PASS watchdog cooldown and rolling restart limit'
+
 if ($Integration) {
     $runner = Join-Path $repo 'tests/.integration-run.local.ps1'
     try {

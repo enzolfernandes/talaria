@@ -16,7 +16,7 @@ using Talaria.UI;
 using Timer = System.Windows.Forms.Timer;
 
 [assembly: System.Reflection.AssemblyTitle("Talaria")]
-[assembly: System.Reflection.AssemblyVersion("0.2.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Test-ServerTray")]
 
 namespace HermesServerTray
@@ -28,6 +28,7 @@ namespace HermesServerTray
     {
         public ProbeKind Kind { get; private set; }
         public string Detail { get; private set; }
+        public string Network { get; internal set; }
 
         public ProbeResult(ProbeKind kind, string detail)
         {
@@ -74,7 +75,9 @@ namespace HermesServerTray
             }
             catch (WebException error)
             {
-                if (error.Response != null) error.Response.Dispose();
+                using (var response = error.Response as HttpWebResponse)
+                    if (response != null && (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden))
+                        return new ProbeResult(ProbeKind.Failed, "Hermes responded but access to its health endpoint was denied.");
                 return new ProbeResult(ProbeKind.Failed, "The server did not respond to the health check.");
             }
             catch (IOException) { return InvalidResponse(); }
@@ -86,7 +89,7 @@ namespace HermesServerTray
             }
         }
 
-        private static bool AddressIsPresent(IPAddress address)
+        internal static bool AddressIsPresent(IPAddress address)
         {
             if (IPAddress.IsLoopback(address)) return true;
             foreach (NetworkInterface network in NetworkInterface.GetAllNetworkInterfaces())
@@ -101,6 +104,59 @@ namespace HermesServerTray
         private static ProbeResult InvalidResponse()
         {
             return new ProbeResult(ProbeKind.Failed, "The response did not match the expected Hermes health response.");
+        }
+
+        internal static string TailscaleApp(string name)
+        {
+            foreach (string root in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) })
+            {
+                if (String.IsNullOrEmpty(root)) continue;
+                string path = Path.Combine(root, "Tailscale", name);
+                if (File.Exists(path)) return path;
+            }
+            return null;
+        }
+
+        internal static string ReadTailscale(Uri endpoint)
+        {
+            IPAddress expected = IPAddress.Parse(endpoint.Host);
+            if (IPAddress.IsLoopback(expected)) return null;
+            string path = TailscaleApp("tailscale.exe");
+            if (path == null) return "Tailscale is not installed.";
+            try
+            {
+                using (var process = Process.Start(new ProcessStartInfo(path, "status --json") {
+                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+                }))
+                {
+                    var output = process.StandardOutput.ReadToEndAsync();
+                    var errors = process.StandardError.ReadToEndAsync();
+                    if (!process.WaitForExit(2500)) { process.Kill(); return "Tailscale status is unavailable."; }
+                    if (!Task.WaitAll(new Task[] { output, errors }, 500) || String.IsNullOrWhiteSpace(output.Result)) return "Tailscale status is unavailable.";
+                    var serializer = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue };
+                    var result = serializer.Deserialize<Dictionary<string, object>>(output.Result);
+                    object backend, addresses;
+                    if (result == null || !result.TryGetValue("BackendState", out backend) || !Object.Equals(backend, "Running")) return "Tailscale is disconnected.";
+                    if (result.TryGetValue("TailscaleIPs", out addresses) && addresses is System.Collections.IEnumerable)
+                    {
+                        bool otherAddress = false;
+                        foreach (object value in (System.Collections.IEnumerable)addresses)
+                        {
+                            IPAddress ip;
+                            if (!IPAddress.TryParse(value as string, out ip) || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || !AddressIsPresent(ip)) continue;
+                            if (ip.Equals(expected)) return "Tailscale is connected.";
+                            otherAddress = true;
+                        }
+                        if (otherAddress) return "Tailscale IPv4 changed. Review the configured address.";
+                    }
+                    return "Waiting for the configured Tailscale IPv4.";
+                }
+            }
+            catch (System.ComponentModel.Win32Exception) { return "Tailscale status is unavailable."; }
+            catch (InvalidOperationException) { return "Tailscale status is unavailable."; }
+            catch (ArgumentException) { return "Tailscale status is unavailable."; }
+            catch (AggregateException) { return "Tailscale status is unavailable."; }
         }
     }
 
@@ -318,11 +374,13 @@ namespace HermesServerTray
         private readonly string folder;
         private readonly string logPath;
         private readonly string setupPath;
+        private readonly string desktopExe;
+        private readonly string desktopAppId;
         private readonly TrayWindow window;
         private readonly Timer timer;
         private readonly ContextMenuStrip menu;
         private readonly ChromeForm panel;
-        private readonly Label panelStatus, panelTime, panelDetail;
+        private readonly Label panelStatus, panelTime, panelDetail, panelNetwork, panelRecovery;
         private readonly Palette palette;
         private readonly StatusTracker tracker = new StatusTracker();
         private readonly Stopwatch clock = Stopwatch.StartNew();
@@ -330,18 +388,23 @@ namespace HermesServerTray
         private TimeSpan probeStartedAt;
         private TimeSpan nextProbe;
         private TimeSpan nextIconRetry;
+        private string networkStatus;
 
-        public TrayContext(Uri endpoint, string folder, string logPath, string setupPath)
+        public TrayContext(Uri endpoint, string folder, string logPath, string setupPath, string desktopExe = null, string desktopAppId = null)
         {
             this.endpoint = endpoint;
             this.folder = folder;
             this.logPath = logPath;
             this.setupPath = setupPath;
+            this.desktopExe = desktopExe;
+            this.desktopAppId = desktopAppId;
             palette = new Palette("System");
             window = new TrayWindow();
             menu = new ContextMenuStrip();
             menu.Items.Add("Check now", null, delegate { VerifyNow(); });
             menu.Items.Add("Copy address", null, delegate { CopyAddress(); });
+            menu.Items.Add("Open Hermes Gateways", null, delegate { OpenHermesGateways(); });
+            menu.Items.Add("Open Tailscale", null, delegate { OpenTailscale(); });
             menu.Items.Add("Open logs", null, delegate { OpenLogs(); });
             menu.Items.Add("Open setup", null, delegate { OpenInstaller(); });
             menu.Items.Add(new ToolStripSeparator());
@@ -358,10 +421,15 @@ namespace HermesServerTray
             panelStatus = PanelLabel("Checking", true);
             panelTime = PanelLabel("First check", false);
             panelDetail = PanelLabel("", false);
+            panelNetwork = PanelLabel("", false);
+            panelRecovery = PanelLabel("", false);
+            panelNetwork.Visible = panelRecovery.Visible = false;
             layout.Controls.Add(panelStatus);
             layout.Controls.Add(PanelLabel(endpoint.Authority, false));
             layout.Controls.Add(panelTime);
             layout.Controls.Add(panelDetail);
+            layout.Controls.Add(panelNetwork);
+            layout.Controls.Add(panelRecovery);
             var refresh = new RoundedButton(palette, true) { Text = "Check now", Margin = new Padding(0, 10, 0, 0) };
             refresh.Click += delegate { VerifyNow(); };
             layout.Controls.Add(refresh);
@@ -389,6 +457,7 @@ namespace HermesServerTray
                     new ProbeResult(ProbeKind.Failed, "The check could not finish.");
                 pending = null;
                 tracker.Apply(result);
+                networkStatus = result.Network;
                 nextProbe = probeStartedAt + TimeSpan.FromSeconds(tracker.CheckIntervalSeconds);
                 RefreshIcon();
             }
@@ -399,7 +468,11 @@ namespace HermesServerTray
             if (pending == null && clock.Elapsed >= nextProbe)
             {
                 probeStartedAt = clock.Elapsed;
-                pending = Task.Factory.StartNew(delegate { return HealthProbe.Check(endpoint); });
+                pending = Task.Factory.StartNew(delegate {
+                    ProbeResult result = HealthProbe.Check(endpoint);
+                    result.Network = HealthProbe.ReadTailscale(endpoint);
+                    return result;
+                });
             }
         }
 
@@ -408,7 +481,83 @@ namespace HermesServerTray
             panelStatus.Text = tracker.Label;
             panelTime.Text = tracker.CheckedAt.HasValue ? "Last checked " + tracker.CheckedAt.Value.ToString("HH:mm:ss") : "Running the first check";
             panelDetail.Text = tracker.Detail;
+            panelNetwork.Text = networkStatus ?? "";
+            panelNetwork.Visible = !String.IsNullOrEmpty(networkStatus);
+            panelRecovery.Text = RecoveryMessage();
+            panelRecovery.Visible = panelRecovery.Text.Length > 0;
             PublishStatus();
+        }
+
+        private string RecoveryMessage()
+        {
+            if (tracker.State == TrayState.Online || String.IsNullOrEmpty(logPath)) return "";
+            try
+            {
+                string path = Path.Combine(Path.GetDirectoryName(logPath), "recovery.json");
+                var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
+                object status, address;
+                if (data == null || !data.TryGetValue("Endpoint", out address) || !Object.Equals(address, endpoint.GetLeftPart(UriPartial.Authority)) ||
+                    !data.TryGetValue("State", out status)) return "";
+                if (Object.Equals(status, "limited")) return "Automatic restart is waiting for the recovery limit.";
+                if (Object.Equals(status, "restarting")) return "Restarting the Hermes server.";
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            return "";
+        }
+
+        private void OpenTailscale()
+        {
+            string path = HealthProbe.TailscaleApp("tailscale-ipn.exe");
+            if (path != null)
+            {
+                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); return; }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
+            ChromeForm.Prompt(palette, null, "Talaria", "Open Tailscale from the Windows Start menu or install it from Talaria Setup.", "OK", false);
+        }
+
+        private void OpenHermesGateways()
+        {
+            try
+            {
+                using (var protocol = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"hermes\shell\open\command"))
+                    if (protocol != null && !String.IsNullOrWhiteSpace(protocol.GetValue(null) as string))
+                    {
+                        Process.Start(new ProcessStartInfo("hermes://open/settings?tab=gateway") { UseShellExecute = true });
+                        return;
+                    }
+            }
+            catch (System.ComponentModel.Win32Exception) { }
+
+            if (!String.IsNullOrEmpty(desktopAppId) && System.Text.RegularExpressions.Regex.IsMatch(desktopAppId, @"^[\w.]+![\w.]+$"))
+            {
+                try { Process.Start(new ProcessStartInfo(@"shell:AppsFolder\" + desktopAppId) { UseShellExecute = true }); }
+                catch (System.ComponentModel.Win32Exception) { }
+                ChromeForm.Prompt(palette, null, "Talaria", "In Hermes Desktop, open Settings > Gateways to select your connection.", "OK", false);
+                return;
+            }
+
+            if (!String.IsNullOrEmpty(desktopExe) && Path.IsPathRooted(desktopExe) &&
+                String.Equals(Path.GetFileName(desktopExe), "Hermes.exe", StringComparison.OrdinalIgnoreCase) && File.Exists(desktopExe))
+            {
+                try { Process.Start(new ProcessStartInfo(desktopExe) { UseShellExecute = true }); }
+                catch (System.ComponentModel.Win32Exception) { }
+                ChromeForm.Prompt(palette, null, "Talaria", "In Hermes Desktop, open Settings > Gateways to select your connection.", "OK", false);
+                return;
+            }
+
+            foreach (string menuRoot in new[] { Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms) })
+            {
+                string shortcut = Path.Combine(menuRoot, "Hermes.lnk");
+                if (!File.Exists(shortcut)) continue;
+                try { Process.Start(new ProcessStartInfo(shortcut) { UseShellExecute = true }); break; }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
+            ChromeForm.Prompt(palette, null, "Talaria", "In Hermes Desktop, open Settings > Gateways to select your connection.", "OK", false);
         }
 
         private void PublishStatus()
@@ -419,6 +568,7 @@ namespace HermesServerTray
             string json = new JavaScriptSerializer().Serialize(new
             {
                 State = tracker.State.ToString(), tracker.Label, tracker.Detail, tracker.Failures,
+                Network = networkStatus, Recovery = panelRecovery.Text,
                 Endpoint = endpoint.GetLeftPart(UriPartial.Authority),
                 CheckedAt = tracker.CheckedAt.HasValue ? tracker.CheckedAt.Value.ToString("o") : null,
                 tracker.CheckIntervalSeconds,
@@ -531,7 +681,10 @@ namespace HermesServerTray
                         catch (EntryPointNotFoundException) { }
                         Application.EnableVisualStyles();
                         Application.SetCompatibleTextRenderingDefault(false);
-                        using (TrayContext context = new TrayContext(endpoint, folder, config["RemoteLog"], setupPath))
+                        string desktopExe, desktopAppId;
+                        config.TryGetValue("DesktopExe", out desktopExe);
+                        config.TryGetValue("DesktopAppId", out desktopAppId);
+                        using (TrayContext context = new TrayContext(endpoint, folder, config["RemoteLog"], setupPath, desktopExe, desktopAppId))
                             Application.Run(context);
                     }
                     finally { singleton.ReleaseMutex(); }

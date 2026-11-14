@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Text;
 using System.Web.Script.Serialization;
 using System.Collections.Generic;
@@ -49,6 +50,7 @@ internal static class TestHermes
             string first = reader.ReadLine();
             if (String.IsNullOrEmpty(first)) return;
             string path = first.Split(' ')[1];
+            if (path == "/api/health" && File.Exists("hang-health")) Thread.Sleep(Timeout.Infinite);
             int length = 0;
             bool authenticated = false;
             bool expectContinue = false;

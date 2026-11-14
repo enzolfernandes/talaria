@@ -34,6 +34,10 @@ Click the winged sandal to see the address, status, and last check. Green means 
 
 **Maintenance** in the installer offers repair and removal. Removing the indicator leaves the server running. **Revert server setup** is available separately for a server created by Talaria.
 
+The connection panel shows Tailscale and Hermes separately. Use **Open Tailscale** to reconnect and **Check now** to refresh. If Tailscale assigns a different IPv4 address, Talaria shows the mismatch and keeps the configured server address. **Open Hermes Gateways** opens the Desktop connection settings, where you can select a gateway and sign in.
+
+The managed server task relaunches Hermes after a process exit. It also checks for a stalled server after a three-minute startup grace period. With the configured local address available, three consecutive connection failures can trigger recovery. Talaria allows up to three stall recoveries in 30 minutes, at least five minutes apart. Use **Maintenance → Enable server recovery** to upgrade a compatible existing task. This restarts the server once and saves a backup.
+
 ## Screenshots
 
 The installer after verifying a protected connection. The address and folder are examples.

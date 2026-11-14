@@ -34,6 +34,10 @@ Clique na sandália alada para ver o endereço, o estado e a última verificaç�
 
 Abra **Maintenance** no instalador para reparar ou remover o indicador. Remover o indicador mantém o servidor em execução. **Revert server setup** está disponível separadamente quando o Talaria criou o servidor.
 
+O painel mostra o Tailscale e o Hermes separadamente. Use **Open Tailscale** para reconectar e **Check now** para atualizar. Se o Tailscale atribuir outro IPv4, o Talaria mostra a divergência e mantém o endereço configurado. **Open Hermes Gateways** abre as configurações do Desktop, onde você pode selecionar um gateway e entrar na conta.
+
+A tarefa gerenciada relança o Hermes quando o processo encerra. Após três minutos de inicialização, também verifica se o servidor travou. Com o endereço local disponível, três falhas consecutivas de conexão podem acionar a recuperação. O Talaria permite até três recuperações por travamento em 30 minutos, com pelo menos cinco minutos entre elas. Use **Maintenance → Enable server recovery** para atualizar uma tarefa compatível. A atualização reinicia o servidor uma vez e salva um backup.
+
 ## Capturas de tela
 
 O instalador após verificar uma conexão protegida. O endereço e a pasta são exemplos.

@@ -16,6 +16,7 @@ $script:TrayDir = Join-Path $script:SetupRoot 'tray'
 $script:ServerDir = Join-Path $script:SetupRoot 'server'
 $script:Pending = Join-Path $script:SetupRoot 'pending.json'
 $script:TrayTask = 'Hermes_Installer_Canary_' + $tag
+$script:LegacyHermesHome = Join-Path $script:SetupRoot 'Legacy Hermes'
 $custom = Join-Path $script:SetupRoot 'Instalacao com espaco'
 $bin = Join-Path $custom 'bin'
 New-Item -ItemType Directory -Path $bin -Force | Out-Null
@@ -43,6 +44,7 @@ function Get-ScheduledTask {
 $script:Network = 'Disconnected'
 function Get-TailscaleInstall {
     if ($script:Network -eq 'Ready') { return @{ Code='Ready'; Address='127.0.0.1'; Message='Fixture' } }
+    if ($script:Network -eq 'Changed') { return @{ Code='Ready'; Address='127.0.0.2'; Message='Fixture' } }
     return @{ Code=$script:Network; Message='Fixture' }
 }
 
@@ -75,6 +77,10 @@ try {
     $fixtureEndpoint = 'http://127.0.0.1:' + $testPort
     $before = Get-TrayStatus $fixtureEndpoint
     Assert-Setup ($first.Code -eq 'Ready' -and $before.ShellRegistered) 'primeira instalacao registra bandeja no Windows'
+    $script:Network = 'Changed'
+    $changedAddress = Get-SetupDiagnosis $mock $custom $testPort $true
+    Assert-Setup ($changedAddress.Tailscale.Code -eq 'AddressChanged' -and (Get-ConfiguredTrayEndpoint).AbsoluteUri.TrimEnd('/') -eq $fixtureEndpoint) 'mudanca de IPv4 preserva a configuracao'
+    $script:Network = 'Ready'
     $again = Install-SetupTray $mock $custom $testPort
     Assert-Setup ($again.Code -eq 'Ready' -and (Get-TrayStatus $fixtureEndpoint).ProcessId -eq $before.ProcessId) 'repeticao nao cria outro indicador'
     Disable-ScheduledTask -TaskName $script:TrayTask -TaskPath '\' | Out-Null
@@ -105,6 +111,86 @@ try {
     Assert-Setup (!(Get-SetupTask $script:TrayTask) -and (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready') 'remover indicador mantem servidor'
     $null = Remove-SetupServer
     Assert-Setup (!(Get-SetupTask $script:TestServerTask) -and (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Unavailable') 'reverter servidor encerra a arvore da tarefa'
+
+    # Exercise the legacy task format with a deliberately incompatible upgrade first.
+    $legacyFolder = Join-Path $script:LegacyHermesHome 'remote-service'
+    $legacyBin = Join-Path $script:LegacyHermesHome 'bin'
+    $null = New-Item -ItemType Directory -Path $legacyFolder,$legacyBin -Force
+    Copy-Item -LiteralPath $mock -Destination (Join-Path $legacyBin 'hermes.exe')
+    New-Item -ItemType File -Path (Join-Path $script:LegacyHermesHome 'existing-auth') | Out-Null
+    $legacyScript = Join-Path $legacyFolder 'RemoteSupervisor.ps1'
+    $legacyVbs = Join-Path $legacyFolder ($script:TestServerTask + '.vbs')
+    @"
+param([string]`$HermesHome='$script:LegacyHermesHome',[string]`$ListenAddress='127.0.0.1',[int]`$Port=$testPort)
+Set-Location -LiteralPath `$HermesHome
+& (Join-Path `$HermesHome 'bin/hermes.exe') serve --host `$ListenAddress --port `$Port
+"@ | Set-Content -LiteralPath $legacyScript
+    @"
+Set sh = CreateObject("WScript.Shell")
+code = sh.Run("""$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"" -NoProfile -ExecutionPolicy Bypass -File ""$legacyScript""", 0, True)
+WScript.Quit code
+"@ | Set-Content -LiteralPath $legacyVbs
+    $wscript = Join-Path ([Environment]::SystemDirectory) 'wscript.exe'
+    try {
+        Register-SetupTask $script:TestServerTask $wscript ('"'+$legacyVbs+'"') 'Talaria legacy fixture' 30
+        Start-ScheduledTask -TaskName $script:TestServerTask -TaskPath '\'
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do { $healthy = (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready'; if (!$healthy) { Start-Sleep -Milliseconds 500 } }
+        while (!$healthy -and [DateTime]::UtcNow -lt $deadline)
+        Assert-Setup $healthy 'tarefa legada de teste inicia servidor protegido'
+        $legacyXml = Export-ScheduledTask -TaskName $script:TestServerTask -TaskPath '\'
+        $rollback = $false
+        $savedPayload = $script:Payload
+        $brokenPayload = Join-Path $script:SetupRoot 'broken-payload'
+        $null = New-Item -ItemType Directory -Path $brokenPayload
+        Copy-Item -LiteralPath (Join-Path $savedPayload 'Hermes.SetupLauncher.exe') -Destination $brokenPayload
+        'exit 1' | Set-Content -LiteralPath (Join-Path $brokenPayload 'PortableSupervisor.ps1')
+        $script:Payload = $brokenPayload
+        try { $null = Enable-SetupServerRecovery $testPort 8 } catch { $rollback = $_.Exception.Message -match 'did not pass health' }
+        finally { $script:Payload = $savedPayload }
+        Assert-Setup ($rollback -and (Export-ScheduledTask -TaskName $script:TestServerTask -TaskPath '\') -ceq $legacyXml -and !(Get-ManagedServer)) 'falha restaura tarefa legada e seus arquivos'
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do { $healthy = (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready'; if (!$healthy) { Start-Sleep -Milliseconds 500 } }
+        while (!$healthy -and [DateTime]::UtcNow -lt $deadline)
+        $recovery = Enable-SetupServerRecovery $testPort 55
+        Assert-Setup ($recovery.Code -eq 'Ready' -and (Get-ManagedServer).RecoveryVersion -eq 1 -and
+            (Test-Path -LiteralPath (Join-Path $recovery.Backup 'task.xml'))) 'migracao legada habilita recuperacao e preserva autenticacao'
+        $fixturePid = (Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort $testPort).OwningProcess
+        Stop-Process -Id $fixturePid
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        do {
+            $newListener = Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort $testPort -ErrorAction SilentlyContinue
+            if ($newListener -and $newListener.OwningProcess -ne $fixturePid) { break }
+            Start-Sleep -Milliseconds 750
+        } while ([DateTime]::UtcNow -lt $deadline)
+        Assert-Setup ($newListener -and $newListener.OwningProcess -ne $fixturePid -and (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready') 'supervisor recupera a saida do processo'
+        $hungPid = $newListener.OwningProcess
+        $hang = Join-Path $script:LegacyHermesHome 'hang-health'
+        $null = New-Item -ItemType File -Path $hang
+        try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(260)
+            do {
+                if (!(Get-Process -Id $hungPid -ErrorAction SilentlyContinue)) { break }
+                Start-Sleep -Seconds 2
+            } while ([DateTime]::UtcNow -lt $deadline)
+            Assert-Setup (!(Get-Process -Id $hungPid -ErrorAction SilentlyContinue)) 'watchdog encerra o servidor travado com a porta aberta'
+        } finally { Remove-Item -LiteralPath $hang -ErrorAction SilentlyContinue }
+        $deadline = [DateTime]::UtcNow.AddSeconds(95)
+        do { $healthy = (Test-HermesEndpoint $fixtureEndpoint).Code -eq 'Ready'; if (!$healthy) { Start-Sleep -Seconds 2 } }
+        while (!$healthy -and [DateTime]::UtcNow -lt $deadline)
+        Assert-Setup ($healthy -and (Test-OwnedServerListener $testPort '127.0.0.1' (Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe'))) 'lancador recupera o servidor travado e preserva o login'
+    } finally {
+        if (Get-ManagedServer) { $null = Remove-SetupServer }
+        elseif ($remaining = Get-LegacyServerTask $script:TestServerTask) {
+            $tree = @(Get-LegacyServerTree $remaining)
+            Stop-SetupTask $script:TestServerTask
+            foreach ($entry in $tree) {
+                $live = Get-CimInstance Win32_Process -Filter ('ProcessId='+$entry.ProcessId) -ErrorAction SilentlyContinue
+                if ($live -and $live.CreationDate -eq $entry.CreationDate) { Stop-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue }
+            }
+            Unregister-ScheduledTask -TaskName $script:TestServerTask -TaskPath '\' -Confirm:$false
+        }
+    }
 
     New-Item -ItemType File -Path (Join-Path $custom 'existing-auth') | Out-Null
     New-Item -ItemType File -Path (Join-Path $custom 'unprotected') | Out-Null

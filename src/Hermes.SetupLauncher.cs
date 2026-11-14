@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Talaria.UI;
 
 [assembly: AssemblyTitle("Talaria Setup")]
-[assembly: AssemblyVersion("0.2.1.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
 
 internal static class SetupLauncher
 {
@@ -26,7 +26,13 @@ internal static class SetupLauncher
             if (server)
             {
                 string folder = AppDomain.CurrentDomain.BaseDirectory;
-                return RunPowerShell(folder, "PortableSupervisor.ps1", true);
+                while (true)
+                {
+                    int result = RunPowerShell(folder, "PortableSupervisor.ps1", true);
+                    if (result != 75) return result;
+                    // RunPowerShell has closed the old Job Object and its process tree.
+                    Thread.Sleep(TimeSpan.FromSeconds(30));
+                }
             }
             if (args.Length != 0) return 2;
 

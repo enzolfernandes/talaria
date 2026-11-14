@@ -3,6 +3,7 @@ $script:Payload = $PSScriptRoot
 $script:SetupRoot = Join-Path $env:LOCALAPPDATA 'HermesServidor'
 $script:TrayDir = Join-Path $env:LOCALAPPDATA 'hermes\server-tray'
 $script:ServerDir = Join-Path $script:SetupRoot 'server'
+$script:LegacyHermesHome = Join-Path $env:LOCALAPPDATA 'hermes'
 $script:TrayTask = 'Hermes_Remote_Tray'
 $script:Account = [Security.Principal.WindowsIdentity]::GetCurrent()
 $script:Pending = Join-Path $script:SetupRoot 'pending.json'
@@ -56,7 +57,12 @@ function Get-HermesDesktopPackage {
 
 function Get-HermesDesktop($Hermes, $Package) {
     if ($Package) {
-        return @{ Code='Ready'; Message='Hermes Desktop found as a Windows app package.' }
+        $appId = try {
+            $manifest = Get-AppxPackageManifest -Package $Package.PackageFullName -ErrorAction Stop
+            $app = @($manifest.Package.Applications.Application | Where-Object { $_.Executable -match '(?:^|[\\/])Hermes\.exe$' })
+            if ($app.Count -eq 1) { $Package.PackageFamilyName + '!' + $app[0].Id }
+        } catch { $null }
+        return @{ Code='Ready'; AppId=$appId; Message='Hermes Desktop found as a Windows app package.' }
     }
     $nativeHomes = @($Hermes.Data, $env:HERMES_HOME, [Environment]::GetEnvironmentVariable('HERMES_HOME','User'),
         (Join-Path $env:LOCALAPPDATA 'hermes'), (Join-Path $env:USERPROFILE '.hermes')) |
@@ -65,7 +71,7 @@ function Get-HermesDesktop($Hermes, $Package) {
         foreach ($output in @('win-unpacked','win-ia32-unpacked','win-arm64-unpacked')) {
             $desktop = Join-Path $homeDirectory "hermes-agent/apps/desktop/release/$output/Hermes.exe"
             if (Test-Path -LiteralPath $desktop -PathType Leaf) {
-                return @{ Code='Ready'; Message='Hermes Desktop found.' }
+                return @{ Code='Ready'; Exe=$desktop; Message='Hermes Desktop found.' }
             }
         }
     }
@@ -76,7 +82,7 @@ function Get-HermesDesktop($Hermes, $Package) {
             $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
             if ($target -match '[\\/]apps[\\/]desktop[\\/]release[\\/]win(?:-ia32|-arm64)?-unpacked[\\/]Hermes\.exe$' -and
                 (Test-Path -LiteralPath $target -PathType Leaf)) {
-                return @{ Code='Ready'; Message='Hermes Desktop found.' }
+                return @{ Code='Ready'; Exe=$target; Message='Hermes Desktop found.' }
             }
         }
     } catch { }
@@ -157,6 +163,7 @@ function Get-TailscaleInstall {
                         return @{ Code='Ready'; Exe=$exe; App=$app; Address=$address; Message="Tailscale connected at $address." }
                     }
                 }
+                return @{ Code='WaitingAddress'; Exe=$exe; App=$app; Message='Tailscale is running. Waiting for its local IPv4 address.' }
             }
         }
     } catch { }
@@ -282,7 +289,7 @@ function Register-SetupTask([string]$Name, [string]$Exe, [string]$Arguments, [st
     $principal = New-ScheduledTaskPrincipal -UserId $script:Account.Name -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable `
-        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+        -RestartCount $(if ($Arguments -eq '--server') { 999 } else { 3 }) -RestartInterval (New-TimeSpan -Minutes 1)
     Register-ScheduledTask -TaskName $Name -TaskPath '\' -Action $action -Trigger $trigger -Principal $principal `
         -Settings $settings -Description $Description -Force:$Replace -ErrorAction Stop | Out-Null
 }
@@ -303,12 +310,13 @@ function Write-SetupJson([string]$Path, $Object) {
     else { [IO.File]::Move($temporary, $Path) }
 }
 
-function Start-SetupTransaction([string]$Name, [string]$Exe, [string]$Arguments, [string[]]$Files, [bool]$FilesOnly = $false) {
+function Start-SetupTransaction([string]$Name, [string]$Exe, [string]$Arguments, [string[]]$Files, [bool]$FilesOnly = $false, $Legacy = $null) {
     if (Test-Path -LiteralPath $script:Pending) { throw [ApplicationException]::new('A previous operation is waiting for recovery.') }
     $directory = Join-Path (Join-Path $script:SetupRoot 'backups') ([DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $task = Get-SetupTask $Name
-    if ($task -and !(Test-SetupTask $task $Exe $Arguments)) { throw [ApplicationException]::new('The existing scheduled task belongs to a different setup.') }
+    if ($task -and !(Test-SetupTask $task $Exe $Arguments) -and
+        !($Legacy -and (Test-SetupTask $task $Legacy.Exe $Legacy.Arguments))) { throw [ApplicationException]::new('The existing scheduled task belongs to a different setup.') }
     if ($task -and !$FilesOnly) {
         Export-ScheduledTask -TaskName $Name -TaskPath '\' | Set-Content -LiteralPath (Join-Path $directory 'task.xml') -Encoding Unicode
     }
@@ -319,7 +327,8 @@ function Start-SetupTransaction([string]$Name, [string]$Exe, [string]$Arguments,
         if ($exists) { Copy-Item -LiteralPath $path -Destination (Join-Path $directory $copy) }
         @{ Path=$path; Copy=$copy; Existed=$exists }
     }
-    $transaction = @{ Name=$Name; Exe=$Exe; Arguments=$Arguments; Backup=$directory; Files=@($records); HadTask=[bool]$task; WasRunning=($task.State -eq 'Running'); FilesOnly=$FilesOnly }
+    $transaction = @{ Name=$Name; Exe=$Exe; Arguments=$Arguments; Backup=$directory; Files=@($records); HadTask=[bool]$task; WasRunning=($task.State -eq 'Running'); FilesOnly=$FilesOnly; Legacy=[bool]$Legacy }
+    Write-SetupJson (Join-Path $directory 'transaction.json') $transaction
     Write-SetupJson $script:Pending $transaction
     return $transaction
 }
@@ -349,7 +358,8 @@ function Undo-SetupTransaction {
     }
     $task = Get-SetupTask $journal.Name
     if ($task -and !$journal.FilesOnly) {
-        if (!(Test-SetupTask $task $journal.Exe $journal.Arguments)) { throw [ApplicationException]::new('The scheduled task changed during setup. The backup was kept.') }
+        $legacy = $journal.Legacy -and (Get-LegacyServerTask $journal.Name)
+        if (!(Test-SetupTask $task $journal.Exe $journal.Arguments) -and !$legacy) { throw [ApplicationException]::new('The scheduled task changed during setup. The backup was kept.') }
         Stop-SetupTask $journal.Name
         Unregister-ScheduledTask -TaskName $journal.Name -TaskPath '\' -Confirm:$false
     }
@@ -379,6 +389,135 @@ function Get-ManagedServer {
     if ($data.OwnerSid -eq $script:Account.User.Value -and $data.Task -match '^Hermes_Remote_\d{1,5}$') { return $data }
 }
 
+function Get-LegacyServerTask([string]$Name) {
+    if ($Name -notmatch '^Hermes_Remote_(\d{1,5})$') { return }
+    $port = [int]$Matches[1]
+    $homePath = $script:LegacyHermesHome
+    $folder = Join-Path $homePath 'remote-service'
+    $vbs = Join-Path $folder "$Name.vbs"
+    $supervisor = Join-Path $folder 'RemoteSupervisor.ps1'
+    $shell = Join-Path ([Environment]::SystemDirectory) 'wscript.exe'
+    $task = Get-SetupTask $Name
+    if (!$task -or @($task.Actions).Count -ne 1) { return }
+    $arguments = ([string]$task.Actions[0].Arguments).Trim().Replace($vbs,'{launcher}')
+    if ($arguments -notmatch '^(?i)(?:(?://B|//Nologo)\s+)*"?\{launcher\}"?$') { return }
+    $exe = $task.Actions[0].Execute
+    if ($exe -notin @('wscript.exe',$shell) -or !(Test-SetupTask $task $exe $task.Actions[0].Arguments.Trim())) { return }
+    if (!(Test-Path -LiteralPath $vbs) -or !(Test-Path -LiteralPath $supervisor)) { return }
+    $launcher = Get-Content -LiteralPath $vbs -Raw
+    if ($launcher.IndexOf($supervisor,[StringComparison]::OrdinalIgnoreCase) -lt 0 -or $launcher -notmatch ',\s*0,\s*True\s*\)') { return }
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($supervisor,[ref]$tokens,[ref]$errors)
+    if ($errors -or !$ast.ParamBlock) { return }
+    $defaults = @{}
+    foreach ($parameter in $ast.ParamBlock.Parameters) {
+        if ($parameter.DefaultValue -is [Management.Automation.Language.ConstantExpressionAst]) {
+            $defaults[$parameter.Name.VariablePath.UserPath] = $parameter.DefaultValue.Value
+        }
+    }
+    $cli = Join-Path $homePath 'bin/hermes.exe'
+    if ($defaults.HermesHome -ine $homePath -or $defaults.Port -ne $port -or !(Test-Path -LiteralPath $cli) -or !$defaults.ListenAddress) { return }
+    return @{ Exe=$exe; Arguments=$task.Actions[0].Arguments.Trim(); Task=$Name; Address=$defaults.ListenAddress; Port=$port;
+        HermesHome=$homePath; HermesExecutable=$cli; Vbs=$vbs; Script=$supervisor; LogDirectory=(Join-Path $homePath "logs/remote-$port") }
+}
+
+function Get-LegacyServerTree($Legacy) {
+    $listener = Get-NetTCPConnection -State Listen -LocalAddress $Legacy.Address -LocalPort $Legacy.Port -ErrorAction SilentlyContinue
+    if (@($listener | Where-Object { $_ }).Count -ne 1) { return }
+    $listenerPid = $listener.OwningProcess
+    $ancestry = @()
+    $session = (Get-Process -Id $PID).SessionId
+    for ($depth = 0; $listenerPid -and $depth -lt 12; $depth++) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$listenerPid" -ErrorAction SilentlyContinue
+        if (!$process -or $process.SessionId -ne $session -or ($ancestry.Count -and $process.CreationDate -gt $ancestry[-1].CreationDate)) { return }
+        $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction SilentlyContinue
+        if ($owner.Sid -ne $script:Account.User.Value) { return }
+        if ($process.Name -ieq 'wscript.exe' -and $process.CommandLine -match [regex]::Escape($Legacy.Vbs) -and
+            @($ancestry | Where-Object { $_.Name -ieq 'powershell.exe' -and $_.CommandLine -match [regex]::Escape($Legacy.Script) }).Count -eq 1 -and
+            $ancestry[0].CommandLine -match '\bserve\b') { return $ancestry }
+        $ancestry += $process
+        $listenerPid = $process.ParentProcessId
+    }
+}
+
+function Assert-ServerIdle($Settings) {
+    $connections = @(Get-NetTCPConnection -State Established -LocalAddress $Settings.Address -LocalPort $Settings.Port -ErrorAction SilentlyContinue)
+    if (@($connections | Where-Object { $_.RemoteAddress -ne $Settings.Address }).Count) {
+        throw [ApplicationException]::new('The server has a remote client connected. Disconnect it and try again.')
+    }
+    $leases = Join-Path $Settings.HermesHome 'runtime/active_sessions.json'
+    if (Test-Path -LiteralPath $leases) {
+        $sessions = Get-Content -LiteralPath $leases -Raw | ConvertFrom-Json
+        foreach ($entry in $sessions.entries) {
+            if ($entry.pid -and (Get-Process -Id $entry.pid -ErrorAction SilentlyContinue)) {
+                throw [ApplicationException]::new('Hermes has active sessions. Finish the active work and try again.')
+            }
+        }
+    } elseif ($connections.Count) {
+        throw [ApplicationException]::new('Disconnect connected clients before restarting this Hermes version.')
+    }
+}
+
+function Enable-SetupServerRecovery([int]$Port, [int]$HealthTimeout = 180) {
+    $name = 'Hermes_Remote_' + $Port
+    $exe = Join-Path $script:ServerDir 'Hermes.SetupLauncher.exe'
+    $managed = Get-ManagedServer
+    $legacy = if (!$managed) { Get-LegacyServerTask $name }
+    $settings = if ($managed -and $managed.Task -eq $name -and (Test-SetupTask (Get-SetupTask $name) $exe '--server')) { $managed } elseif ($legacy) { [pscustomobject]@{
+        Task=$name; OwnerSid=$script:Account.User.Value; Address=$legacy.Address; Port=$Port; HermesHome=$legacy.HermesHome;
+        HermesExecutable=$legacy.HermesExecutable; LogDirectory=$legacy.LogDirectory
+    } }
+    if (!$settings) { throw [ApplicationException]::new('No compatible local server task was found.') }
+    $endpoint = 'http://' + $settings.Address + ':' + $Port
+    $health = Test-HermesEndpoint $endpoint
+    if ($health.Code -ne 'Ready') { throw [ApplicationException]::new('Start the existing task and verify the protected server connection before enabling recovery.') }
+    $tree = if ($legacy) { @(Get-LegacyServerTree $legacy) }
+    if (($legacy -and !$tree.Count) -or (!$legacy -and !(Test-OwnedServerListener $Port $settings.Address $exe))) {
+        throw [ApplicationException]::new('The listener does not belong to the expected task.')
+    }
+    Assert-ServerIdle $settings
+    $payload = @('Hermes.SetupLauncher.exe','PortableSupervisor.ps1')
+    foreach ($file in $payload) { if (!(Test-Path -LiteralPath (Join-Path $script:Payload $file))) { throw 'The server recovery payload is missing.' } }
+    $tx = Start-SetupTransaction $name $exe '--server' (Get-SetupServerFiles) $false $legacy
+    try {
+        if ($legacy) {
+            Copy-Item -LiteralPath $legacy.Vbs,$legacy.Script -Destination $tx.Backup
+        }
+        Assert-ServerIdle $settings
+    } catch { Complete-SetupTransaction; throw }
+    try {
+        Stop-SetupTask $name
+        if ($legacy) {
+            foreach ($entry in @($tree | Sort-Object CreationDate -Descending)) {
+                $live = Get-CimInstance Win32_Process -Filter ('ProcessId='+$entry.ProcessId) -ErrorAction SilentlyContinue
+                if ($live -and $live.CreationDate -eq $entry.CreationDate -and $live.CommandLine -ceq $entry.CommandLine) {
+                    Stop-Process -Id $entry.ProcessId -ErrorAction Stop
+                }
+            }
+        }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue) {
+            if ([DateTime]::UtcNow -ge $deadline) { throw [ApplicationException]::new('The server port did not become free.') }
+            Start-Sleep -Milliseconds 300
+        }
+        New-Item -ItemType Directory -Path $script:ServerDir -Force | Out-Null
+        foreach ($file in $payload) { Copy-Item -LiteralPath (Join-Path $script:Payload $file) -Destination (Join-Path $script:ServerDir $file) -Force }
+        $settings | Add-Member NoteProperty RecoveryVersion 1 -Force
+        Write-SetupJson (Join-Path $script:ServerDir 'config.json') $settings
+        Register-SetupTask $name $exe '--server' 'Hermes server on Tailscale' 30 $true
+        Start-ScheduledTask -TaskName $name -TaskPath '\'
+        $deadline = [DateTime]::UtcNow.AddSeconds($HealthTimeout)
+        do {
+            if ((Test-HermesEndpoint $endpoint).Code -eq 'Ready' -and (Test-OwnedServerListener $Port $settings.Address $exe)) {
+                Complete-SetupTransaction
+                return @{ Code='Ready'; Backup=$tx.Backup; Message='Automatic recovery is enabled. Server health and sign-in protection were verified.' }
+            }
+            Start-Sleep -Milliseconds 750
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw [ApplicationException]::new('The upgraded server did not pass health and authentication checks.')
+    } catch { Undo-SetupTransaction; throw }
+}
+
 function Find-SetupPort([string]$Address, [int]$Port) {
     $existing = Get-ManagedServer
     if ($existing) { return [int]$existing.Port }
@@ -394,6 +533,15 @@ function Find-SetupPort([string]$Address, [int]$Port) {
         if ($process.CommandLine -match '(?i)\bserve\b' -and $process.CommandLine -match '(?i)hermes') { return [int]$listener.LocalPort }
     }
     return $Port
+}
+
+function Get-ConfiguredTrayEndpoint {
+    try {
+        $path = Join-Path $script:TrayDir 'config.json'
+        $uri = [uri]((Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json).Endpoint)
+        if ($uri.IsAbsoluteUri -and $uri.Scheme -eq 'http' -and $uri.HostNameType -eq 'IPv4' -and
+            $uri.AbsolutePath -eq '/' -and !$uri.UserInfo -and !$uri.Query -and !$uri.Fragment) { return $uri }
+    } catch { }
 }
 
 function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$SuggestPort) {
@@ -416,6 +564,14 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
     $tailscale = Get-TailscaleInstall
     $server = @{ Code='Pending'; Message='Complete the Hermes and Tailscale checks.' }
     $endpoint = $null
+    $managed = Get-ManagedServer
+    $savedEndpoint = Get-ConfiguredTrayEndpoint
+    $expectedAddress = if ($managed) { $managed.Address } elseif ($savedEndpoint) { $savedEndpoint.Host }
+    if ($tailscale.Code -eq 'Ready' -and $expectedAddress -and $tailscale.Address -ne $expectedAddress) {
+        $tailscale.Code = 'AddressChanged'
+        $tailscale.Message = "Tailscale has $($tailscale.Address). The server is configured for $expectedAddress. Review the server address before changing it."
+        $server.Message = 'The configured server address was kept.'
+    }
     if ($tailscale.Code -eq 'Ready') {
         if ($SuggestPort) { $Port = Find-SetupPort $tailscale.Address $Port }
         $endpoint = 'http://' + $tailscale.Address + ':' + $Port
@@ -431,8 +587,10 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
         }
     }
     $trayExe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
+    $legacy = if (!$managed -and $server.Code -eq 'Ready') { Get-LegacyServerTask ('Hermes_Remote_' + $Port) }
     return @{ Hermes=$hermes; Desktop=$desktop; Tailscale=$tailscale; Server=$server; Endpoint=$endpoint; Port=$Port;
-        HasTray=(Test-SetupTask (Get-SetupTask $script:TrayTask) $trayExe); ManagedServer=[bool](Get-ManagedServer) }
+        HasTray=(Test-SetupTask (Get-SetupTask $script:TrayTask) $trayExe); ManagedServer=[bool]$managed;
+        CanEnableRecovery=($server.Code -eq 'Ready' -and ($legacy -or ($managed -and $managed.Port -eq $Port -and $managed.RecoveryVersion -ne 1))) }
 }
 
 function Protect-SetupSecret([string]$Value) {
@@ -538,6 +696,7 @@ function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Po
             OwnerSid=$script:Account.User.Value; Task=$name; HermesHome=$diagnosis.Hermes.Data;
             HermesExecutable=$diagnosis.Hermes.Exe; Address=$diagnosis.Tailscale.Address; Port=$Port;
             LogDirectory=$logDirectory
+            RecoveryVersion=1
         }
         if (!(Test-SetupSchedule $currentTask)) { Register-SetupTask $name $exe '--server' 'Hermes server on Tailscale' 30 ([bool]$currentTask) }
         Enable-ScheduledTask -TaskName $name -TaskPath '\' | Out-Null
@@ -596,7 +755,9 @@ function Get-TrayStatus([string]$Endpoint) {
         $state = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         if ($state.Endpoint -ne $Endpoint -or !$state.ShellRegistered -or $state.State -ne 'Online') { return }
         $checkWindow = if ($state.CheckIntervalSeconds -eq 300) { 320 } else { 20 }
-        if (([DateTimeOffset]::Now - [DateTimeOffset]::Parse($state.CheckedAt)).TotalSeconds -gt $checkWindow) { return }
+        $checkedAt = if ($state.CheckedAt -is [DateTime]) { [DateTimeOffset]::new($state.CheckedAt) }
+            else { [DateTimeOffset]::Parse([string]$state.CheckedAt, [Globalization.CultureInfo]::InvariantCulture) }
+        if (([DateTimeOffset]::Now - $checkedAt).TotalSeconds -gt $checkWindow) { return }
         $process = Get-Process -Id $state.ProcessId -ErrorAction SilentlyContinue
         if ($process.Path -ieq (Join-Path $script:TrayDir 'Hermes.ServerTray.exe') -and
             $process.SessionId -eq (Get-Process -Id $PID).SessionId) { return $state }
@@ -627,13 +788,13 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
     $log = if ($managed -and $managed.Port -eq $Port) { Join-Path $managed.LogDirectory 'remote.log' }
         elseif ($installed.Endpoint -eq $diagnosis.Endpoint -and $installed.RemoteLog) { $installed.RemoteLog }
         else { Join-Path $diagnosis.Hermes.Data ('logs\remote-' + $Port + '\remote.log') }
-    $null = Start-SetupTransaction $script:TrayTask $exe '' @($exe,$config,$setupFile)
+    $tx = Start-SetupTransaction $script:TrayTask $exe '' @($exe,$config,$setupFile)
     try {
         Stop-SetupTask $script:TrayTask
         New-Item -ItemType Directory -Path $script:TrayDir -Force | Out-Null
         if (!$matching) { Copy-Item -LiteralPath $packaged -Destination $exe -Force }
         if (!$setupMatching) { Copy-Item -LiteralPath $setupPayload -Destination $setupFile -Force }
-        Write-SetupJson $config @{ Endpoint=$diagnosis.Endpoint; RemoteLog=$log; SetupPath=$setupFile }
+        Write-SetupJson $config @{ Endpoint=$diagnosis.Endpoint; RemoteLog=$log; SetupPath=$setupFile; DesktopExe=$diagnosis.Desktop.Exe; DesktopAppId=$diagnosis.Desktop.AppId }
         if (!(Test-SetupSchedule $task)) { Register-SetupTask $script:TrayTask $exe '' 'Talaria tray indicator for Hermes' 5 ([bool]$task) }
         Enable-ScheduledTask -TaskName $script:TrayTask -TaskPath '\' | Out-Null
         Start-ScheduledTask -TaskName $script:TrayTask -TaskPath '\'
@@ -641,7 +802,7 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
         do {
             if (Get-TrayStatus $diagnosis.Endpoint) {
                 Complete-SetupTransaction
-                return @{ Code='Ready'; Message='Indicator installed and registered in the tray.' }
+                return @{ Code='Ready'; Backup=$tx.Backup; Message='Indicator installed and registered in the tray.' }
             }
             Start-Sleep -Milliseconds 250
         } while ([DateTime]::UtcNow -lt $deadline)
