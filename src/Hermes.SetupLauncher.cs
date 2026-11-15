@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Talaria.UI;
 
 [assembly: AssemblyTitle("Talaria Setup")]
-[assembly: AssemblyVersion("0.3.0.0")]
+[assembly: AssemblyVersion("0.3.1.0")]
 
 internal static class SetupLauncher
 {

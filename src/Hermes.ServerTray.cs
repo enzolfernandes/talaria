@@ -16,7 +16,7 @@ using Talaria.UI;
 using Timer = System.Windows.Forms.Timer;
 
 [assembly: System.Reflection.AssemblyTitle("Talaria")]
-[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.1.0")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Test-ServerTray")]
 
 namespace HermesServerTray

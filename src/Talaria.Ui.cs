@@ -232,7 +232,7 @@ namespace Talaria.UI
                     actions.Controls.Add(back);
                     dialog.CancelButton = back;
                     dialog.AcceptButton = back;
-                    dialog.ActiveControl = back;
+                    dialog.Shown += delegate { back.Select(); };
                 }
                 else dialog.CancelButton = confirm;
                 body.Controls.Add(text);

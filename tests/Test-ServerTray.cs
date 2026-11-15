@@ -5,7 +5,9 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Windows.Forms;
 using HermesServerTray;
+using Talaria.UI;
 
 internal static class ServerTrayTest
 {
@@ -64,6 +66,35 @@ internal static class ServerTrayTest
         Expect(registered && commands.Count == 0, "an icon Explorer still owns can be updated without being replaced");
     }
 
+    private static void CheckConfirmation(Form owner, string action, bool accept)
+    {
+        string title = action + " confirmation";
+        bool cancelSelected = false;
+        using (var timer = new System.Windows.Forms.Timer { Interval = 50 })
+        {
+            timer.Tick += delegate
+            {
+                timer.Stop();
+                Form prompt = null;
+                foreach (Form form in Application.OpenForms)
+                    if (form.Text == title) { prompt = form; break; }
+                if (prompt == null) return;
+                cancelSelected = prompt.ActiveControl == prompt.CancelButton && prompt.AcceptButton == prompt.CancelButton;
+                if (!accept) prompt.AcceptButton.PerformClick();
+                else
+                {
+                    foreach (Control control in ((Control)prompt.CancelButton).Parent.Controls)
+                        if (control is Button && control.Text == action) { ((Button)control).PerformClick(); return; }
+                    prompt.Close();
+                }
+            };
+            timer.Start();
+            bool result = ChromeForm.Prompt(new Palette("System"), owner, title, "Confirm the maintenance action.", action, true);
+            Expect(cancelSelected && result == accept, action + (accept ? " can be confirmed" : " defaults to Cancel"));
+        }
+    }
+
+    [STAThread]
     private static void Main()
     {
         ProbeResult live = ProbeResponse("{\"ok\":true,\"version\":\"0.23.0\"}");
@@ -88,5 +119,10 @@ internal static class ServerTrayTest
         tracker.Apply(live);
         Expect(tracker.State == TrayState.Online && tracker.Failures == 0, "recovery returns to green");
         CheckIconRecovery();
+        using (var owner = new Form())
+        {
+            CheckConfirmation(owner, "Remove", false);
+            CheckConfirmation(owner, "Revert", true);
+        }
     }
 }
