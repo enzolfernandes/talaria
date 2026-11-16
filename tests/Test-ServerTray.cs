@@ -103,6 +103,10 @@ internal static class ServerTrayTest
         Expect(invalid.Kind == ProbeKind.Failed, "unrelated HTTP 200 is rejected");
         ProbeResult missing = HealthProbe.Check(new Uri("http://192.0.2.1:9119"));
         Expect(missing.Kind == ProbeKind.MissingAddress, "missing local address is detected");
+        Expect(HealthProbe.IsSupportedEndpoint(new Uri("https://node.example.ts.net:8443/")), "Tailscale HTTPS URL is accepted");
+        Expect(!HealthProbe.IsSupportedEndpoint(new Uri("http://node.example.ts.net:8443/")) &&
+            !HealthProbe.IsSupportedEndpoint(new Uri("https://node.example.ts.net.example.org:8443/")) &&
+            !HealthProbe.IsSupportedEndpoint(new Uri("https://node.example.ts.net:8443/hermes")), "unsupported HTTPS and DNS endpoints are rejected");
         StatusTracker tracker = new StatusTracker();
         Expect(tracker.CheckIntervalSeconds == 15, "startup uses the 15-second retry interval");
         tracker.Apply(live);

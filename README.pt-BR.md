@@ -26,6 +26,8 @@ A validação da v0.2.0 abrangeu o Windows 10 x64 e incluiu o acionamento manual
 4. Abra o Tailscale e entre na conta quando solicitado. O Talaria verifica se a máquina recebeu um endereço do Tailscale. Use **Check again** após concluir uma instalação externa ou reiniciar o Windows.
 5. Configure o servidor se o instalador solicitar. O Talaria reaproveita um servidor saudável e autenticado e as tarefas de início compatíveis. Selecione **Install indicator** após as verificações de saúde e autenticação. Se o Talaria criar credenciais, ele também fará login e encerrará a sessão de teste.
 
+Para monitorar um gateway já disponível pelo Tailscale Serve, informe a URL `.ts.net` em **Existing Tailscale HTTPS URL (optional)**, selecione **Test connection** e instale ou atualize o indicador. O instalador usa a porta da URL HTTPS. O campo **Direct HTTP port** aparece quando a URL está em branco. A inicialização do gateway fica a cargo da configuração existente do Hermes. [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
+
 Se o instalador oficial do Hermes informar que não encontrou o WebView2, instale o Microsoft Evergreen WebView2 Runtime e selecione **Install Hermes Desktop** novamente. [Download do Microsoft WebView2](https://developer.microsoft.com/pt-br/microsoft-edge/webview2/#download-section)
 
 Se o instalador oficial parar com `WinError 3` ao copiar um arquivo cujo caminho ultrapassa 260 caracteres, habilite os **caminhos longos do Win32** no Windows e reabra o instalador. [Documentação da Microsoft sobre caminhos longos](https://learn.microsoft.com/pt-br/windows/win32/fileio/maximum-file-path-limitation#enable-long-paths-in-windows-10-version-1607-and-later)

@@ -16,7 +16,7 @@ using Talaria.UI;
 using Timer = System.Windows.Forms.Timer;
 
 [assembly: System.Reflection.AssemblyTitle("Talaria")]
-[assembly: System.Reflection.AssemblyVersion("0.3.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.2.0")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Test-ServerTray")]
 
 namespace HermesServerTray
@@ -39,14 +39,26 @@ namespace HermesServerTray
 
     public static class HealthProbe
     {
+        internal static bool IsSupportedEndpoint(Uri endpoint)
+        {
+            if (endpoint == null || !endpoint.IsAbsoluteUri || endpoint.Port < 1 || endpoint.AbsolutePath != "/" ||
+                !String.IsNullOrEmpty(endpoint.UserInfo) || !String.IsNullOrEmpty(endpoint.Query) ||
+                !String.IsNullOrEmpty(endpoint.Fragment)) return false;
+
+            return (endpoint.Scheme == Uri.UriSchemeHttp && endpoint.HostNameType == UriHostNameType.IPv4) ||
+                (endpoint.Scheme == Uri.UriSchemeHttps && endpoint.HostNameType == UriHostNameType.Dns &&
+                endpoint.IdnHost.EndsWith(".ts.net", StringComparison.OrdinalIgnoreCase));
+        }
+
         public static ProbeResult Check(Uri endpoint)
         {
-            IPAddress address = IPAddress.Parse(endpoint.Host);
             try
             {
-                if (!AddressIsPresent(address))
+                if (endpoint.Scheme == Uri.UriSchemeHttp && !AddressIsPresent(IPAddress.Parse(endpoint.Host)))
                     return new ProbeResult(ProbeKind.MissingAddress, "Waiting for the Tailscale address.");
 
+                if (endpoint.Scheme == Uri.UriSchemeHttps)
+                    ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(new Uri(endpoint, "/api/health"));
                 request.Proxy = null;
                 request.AllowAutoRedirect = false;
@@ -70,7 +82,11 @@ namespace HermesServerTray
                         !json.TryGetValue("version", out version) || !(version is string) ||
                         String.IsNullOrWhiteSpace((string)version))
                         return InvalidResponse();
-                    return new ProbeResult(ProbeKind.Healthy, "Hermes " + (string)version + " passed the local health check.");
+                    object authRequired;
+                    if (endpoint.Scheme == Uri.UriSchemeHttps &&
+                        (!json.TryGetValue("auth_required", out authRequired) || !Object.Equals(authRequired, true)))
+                        return new ProbeResult(ProbeKind.Failed, "The HTTPS gateway did not report sign-in protection.");
+                    return new ProbeResult(ProbeKind.Healthy, "Hermes " + (string)version + " passed the health check.");
                 }
             }
             catch (WebException error)
@@ -78,6 +94,8 @@ namespace HermesServerTray
                 using (var response = error.Response as HttpWebResponse)
                     if (response != null && (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden))
                         return new ProbeResult(ProbeKind.Failed, "Hermes responded but access to its health endpoint was denied.");
+                if (error.Status == WebExceptionStatus.TrustFailure || error.Status == WebExceptionStatus.SecureChannelFailure)
+                    return new ProbeResult(ProbeKind.Failed, "Could not establish a trusted HTTPS connection to the gateway.");
                 return new ProbeResult(ProbeKind.Failed, "The server did not respond to the health check.");
             }
             catch (IOException) { return InvalidResponse(); }
@@ -120,8 +138,8 @@ namespace HermesServerTray
 
         internal static string ReadTailscale(Uri endpoint)
         {
-            IPAddress expected = IPAddress.Parse(endpoint.Host);
-            if (IPAddress.IsLoopback(expected)) return null;
+            IPAddress expected = endpoint.Scheme == Uri.UriSchemeHttp ? IPAddress.Parse(endpoint.Host) : null;
+            if (expected != null && IPAddress.IsLoopback(expected)) return null;
             string path = TailscaleApp("tailscale.exe");
             if (path == null) return "Tailscale is not installed.";
             try
@@ -138,6 +156,7 @@ namespace HermesServerTray
                     var result = serializer.Deserialize<Dictionary<string, object>>(output.Result);
                     object backend, addresses;
                     if (result == null || !result.TryGetValue("BackendState", out backend) || !Object.Equals(backend, "Running")) return "Tailscale is disconnected.";
+                    if (expected == null) return "Tailscale is connected.";
                     if (result.TryGetValue("TailscaleIPs", out addresses) && addresses is System.Collections.IEnumerable)
                     {
                         bool otherAddress = false;
@@ -425,7 +444,7 @@ namespace HermesServerTray
             panelRecovery = PanelLabel("", false);
             panelNetwork.Visible = panelRecovery.Visible = false;
             layout.Controls.Add(panelStatus);
-            layout.Controls.Add(PanelLabel(endpoint.Authority, false));
+            layout.Controls.Add(PanelLabel(endpoint.GetLeftPart(UriPartial.Authority), false));
             layout.Controls.Add(panelTime);
             layout.Controls.Add(panelDetail);
             layout.Controls.Add(panelNetwork);
@@ -663,12 +682,8 @@ namespace HermesServerTray
                 if (!config.TryGetValue("SetupPath", out setupPath) || String.IsNullOrWhiteSpace(setupPath))
                     setupPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HermesServidor", "Instalar-Talaria.exe");
                 Uri endpoint = new Uri(config["Endpoint"]);
-                IPAddress address;
-                if (endpoint.Scheme != "http" || !IPAddress.TryParse(endpoint.Host, out address) ||
-                    address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
-                    endpoint.AbsolutePath != "/" || !String.IsNullOrEmpty(endpoint.UserInfo) ||
-                    !String.IsNullOrEmpty(endpoint.Query) || !String.IsNullOrEmpty(endpoint.Fragment))
-                    throw new InvalidDataException("Endpoint must be an HTTP IPv4 address and port.");
+                if (!HealthProbe.IsSupportedEndpoint(endpoint))
+                    throw new InvalidDataException("Use an HTTP IPv4 address or a Tailscale HTTPS URL.");
 
                 string sid = WindowsIdentity.GetCurrent().User.Value;
                 bool created;

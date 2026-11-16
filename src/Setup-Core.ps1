@@ -535,16 +535,22 @@ function Find-SetupPort([string]$Address, [int]$Port) {
     return $Port
 }
 
+function ConvertTo-TrayEndpoint([string]$Value) {
+    $uri = $null
+    if (![uri]::TryCreate($Value,[UriKind]::Absolute,[ref]$uri) -or $uri.Port -lt 1 -or
+        $uri.AbsolutePath -ne '/' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { return }
+    if (($uri.Scheme -eq 'http' -and $uri.HostNameType -eq 'IPv4') -or
+        ($uri.Scheme -eq 'https' -and $uri.HostNameType -eq 'Dns' -and $uri.IdnHost.EndsWith('.ts.net',[StringComparison]::OrdinalIgnoreCase))) { return $uri }
+}
+
 function Get-ConfiguredTrayEndpoint {
     try {
         $path = Join-Path $script:TrayDir 'config.json'
-        $uri = [uri]((Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json).Endpoint)
-        if ($uri.IsAbsoluteUri -and $uri.Scheme -eq 'http' -and $uri.HostNameType -eq 'IPv4' -and
-            $uri.AbsolutePath -eq '/' -and !$uri.UserInfo -and !$uri.Query -and !$uri.Fragment) { return $uri }
+        ConvertTo-TrayEndpoint ((Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json).Endpoint)
     } catch { }
 }
 
-function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$SuggestPort) {
+function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$SuggestPort, $HttpsEndpoint = $null) {
     $package = Get-HermesDesktopPackage
     $hermes = Get-HermesInstall $ExeOverride $DataOverride $package
     $desktop = Get-HermesDesktop $hermes $package
@@ -566,7 +572,21 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
     $endpoint = $null
     $managed = Get-ManagedServer
     $savedEndpoint = Get-ConfiguredTrayEndpoint
-    $expectedAddress = if ($managed) { $managed.Address } elseif ($savedEndpoint) { $savedEndpoint.Host }
+    if ($null -eq $HttpsEndpoint -and $savedEndpoint.Scheme -eq 'https') { $HttpsEndpoint = $savedEndpoint.GetLeftPart([UriPartial]::Authority) }
+    $trayExe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
+    $hasTray = Test-SetupTask (Get-SetupTask $script:TrayTask) $trayExe
+    if ($HttpsEndpoint) {
+        $uri = ConvertTo-TrayEndpoint $HttpsEndpoint
+        if (!$uri -or $uri.Scheme -ne 'https') {
+            $server = @{ Code='InvalidEndpoint'; Message='Enter a Tailscale HTTPS URL with no path, credentials, or query.' }
+        } else {
+            $endpoint = $uri.GetLeftPart([UriPartial]::Authority)
+            if ($tailscale.Code -eq 'Ready') { $server = Test-HermesEndpoint $endpoint }
+        }
+        return @{ Hermes=$hermes; Desktop=$desktop; Tailscale=$tailscale; Server=$server; Endpoint=$endpoint; Port=$Port;
+            HttpsEndpoint=$HttpsEndpoint; HasTray=$hasTray; ManagedServer=$false; CanEnableRecovery=$false }
+    }
+    $expectedAddress = if ($managed) { $managed.Address } elseif ($savedEndpoint.Scheme -eq 'http') { $savedEndpoint.Host }
     if ($tailscale.Code -eq 'Ready' -and $expectedAddress -and $tailscale.Address -ne $expectedAddress) {
         $tailscale.Code = 'AddressChanged'
         $tailscale.Message = "Tailscale has $($tailscale.Address). The server is configured for $expectedAddress. Review the server address before changing it."
@@ -586,10 +606,9 @@ function Get-SetupDiagnosis([string]$ExeOverride, [string]$DataOverride, [int]$P
             }
         }
     }
-    $trayExe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
     $legacy = if (!$managed -and $server.Code -eq 'Ready') { Get-LegacyServerTask ('Hermes_Remote_' + $Port) }
     return @{ Hermes=$hermes; Desktop=$desktop; Tailscale=$tailscale; Server=$server; Endpoint=$endpoint; Port=$Port;
-        HasTray=(Test-SetupTask (Get-SetupTask $script:TrayTask) $trayExe); ManagedServer=[bool]$managed;
+        HasTray=$hasTray; ManagedServer=[bool]$managed;
         CanEnableRecovery=($server.Code -eq 'Ready' -and ($legacy -or ($managed -and $managed.Port -eq $Port -and $managed.RecoveryVersion -ne 1))) }
 }
 
@@ -648,7 +667,7 @@ function Update-SetupCredentials([string]$Endpoint) {
 }
 
 function Start-SetupServer([string]$ExeOverride, [string]$DataOverride, [int]$Port, [string]$Username, [string]$Password) {
-    $diagnosis = Get-SetupDiagnosis $ExeOverride $DataOverride $Port $false
+    $diagnosis = Get-SetupDiagnosis $ExeOverride $DataOverride $Port $false -HttpsEndpoint ''
     if ($diagnosis.Server.Code -eq 'Ready') { return @{ Code='Ready'; Message='The existing healthy server was reused.' } }
     if ($diagnosis.Hermes.Code -ne 'Ready' -or $diagnosis.Tailscale.Code -ne 'Ready') { throw [ApplicationException]::new('Complete the checks before setting up the server.') }
     if ($diagnosis.Server.Code -ne 'Unavailable') { throw [ApplicationException]::new($diagnosis.Server.Message) }
@@ -764,8 +783,8 @@ function Get-TrayStatus([string]$Endpoint) {
     } catch { }
 }
 
-function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$Repair = $false) {
-    $diagnosis = Get-SetupDiagnosis $ExeOverride $DataOverride $Port $false
+function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Port, [bool]$Repair = $false, $HttpsEndpoint = $null) {
+    $diagnosis = Get-SetupDiagnosis $ExeOverride $DataOverride $Port $false $HttpsEndpoint
     if ($diagnosis.Server.Code -ne 'Ready') { throw [ApplicationException]::new($diagnosis.Server.Message) }
     $exe = Join-Path $script:TrayDir 'Hermes.ServerTray.exe'
     $config = Join-Path $script:TrayDir 'config.json'
@@ -776,7 +795,7 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
     $packaged = Join-Path $script:Payload 'Hermes.ServerTray.exe'
     $matching = (Test-Path -LiteralPath $exe) -and (Get-FileHash -LiteralPath $exe).Hash -eq (Get-FileHash -LiteralPath $packaged).Hash
     $installed = if (Test-Path -LiteralPath $config) { try { Get-Content -LiteralPath $config -Raw | ConvertFrom-Json } catch { } }
-    if ($Repair) { Update-SetupCredentials $diagnosis.Endpoint }
+    if ($Repair -and !$diagnosis.HttpsEndpoint) { Update-SetupCredentials $diagnosis.Endpoint }
     $setupMatching = (Test-Path -LiteralPath $setupFile -PathType Leaf) -and
         (Get-FileHash -LiteralPath $setupFile).Hash -eq (Get-FileHash -LiteralPath $setupPayload).Hash
     if ((Test-SetupSchedule $task) -and $matching -and $setupMatching -and $installed.Endpoint -eq $diagnosis.Endpoint -and (Get-TrayStatus $diagnosis.Endpoint)) {
@@ -785,7 +804,8 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
     if (!$task -and (Test-Path -LiteralPath $exe) -and !$matching) { throw [ApplicationException]::new('The indicator folder contains an unrecognized executable.') }
 
     $managed = Get-ManagedServer
-    $log = if ($managed -and $managed.Port -eq $Port) { Join-Path $managed.LogDirectory 'remote.log' }
+    $log = if ($diagnosis.HttpsEndpoint) { Join-Path $diagnosis.Hermes.Data 'logs/gateway.log' }
+        elseif ($managed -and $managed.Port -eq $Port) { Join-Path $managed.LogDirectory 'remote.log' }
         elseif ($installed.Endpoint -eq $diagnosis.Endpoint -and $installed.RemoteLog) { $installed.RemoteLog }
         else { Join-Path $diagnosis.Hermes.Data ('logs\remote-' + $Port + '\remote.log') }
     $tx = Start-SetupTransaction $script:TrayTask $exe '' @($exe,$config,$setupFile)
@@ -798,7 +818,7 @@ function Install-SetupTray([string]$ExeOverride, [string]$DataOverride, [int]$Po
         if (!(Test-SetupSchedule $task)) { Register-SetupTask $script:TrayTask $exe '' 'Talaria tray indicator for Hermes' 5 ([bool]$task) }
         Enable-ScheduledTask -TaskName $script:TrayTask -TaskPath '\' | Out-Null
         Start-ScheduledTask -TaskName $script:TrayTask -TaskPath '\'
-        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {
             if (Get-TrayStatus $diagnosis.Endpoint) {
                 Complete-SetupTransaction

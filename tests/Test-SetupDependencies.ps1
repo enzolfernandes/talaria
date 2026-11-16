@@ -94,3 +94,19 @@ Assert-Dependency ($script:BuildCount -eq 1 -and $script:BuildHome -eq $workspac
 $clean.Desktop.Code = 'Ready'
 Assert-Dependency ((Install-SetupDependency 'HermesDesktop' $clean).Code -eq 'AlreadyPresent' -and
     $script:BuildCount -eq 1 -and $script:LaunchCount -eq 2) 'installed Desktop skips all installers'
+
+function Get-HermesInstall { return @{ Code='Ready' } }
+function Get-TailscaleInstall { return @{ Code='Ready'; Address='100.64.0.10' } }
+function Invoke-SetupCommand { return 'Hermes Agent 0.23.0' }
+function Get-ConfiguredTrayEndpoint { return [uri]'https://node.example.ts.net:8443' }
+function Get-ManagedServer { }
+function Get-SetupTask { }
+function Test-HermesEndpoint([string]$Endpoint) {
+    $script:ProbedEndpoint = $Endpoint
+    return @{ Code='Ready' }
+}
+
+$https = Get-SetupDiagnosis '' '' 9119 $false
+Assert-Dependency ($https.Endpoint -eq 'https://node.example.ts.net:8443' -and $script:ProbedEndpoint -eq $https.Endpoint) 'setup reuses a saved Tailscale HTTPS URL'
+$null = Start-SetupServer '' '' 9119 '' ''
+Assert-Dependency ($script:ProbedEndpoint -eq 'http://100.64.0.10:9119') 'direct server setup checks the HTTP port even with HTTPS saved'

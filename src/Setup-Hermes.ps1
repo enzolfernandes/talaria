@@ -9,6 +9,7 @@ $script:Job = $null
 $script:NeedsLogin = $false
 $script:IgnorePortChange = $false
 $script:PortEdited = $false
+$script:HttpsEdited = $false
 $script:Finished = $false
 $script:SkipDesktop = $false
 $script:NextTailscaleCheck = $null
@@ -186,7 +187,7 @@ Add-StatusRow 'Tailscale' $tailscaleStatus $tailscaleOptions
 
 $serverStatus = New-Text 'Waiting for checks'
 $connectionActions = New-Flow
-$portLabel = New-Text 'Port'
+$portLabel = New-Text 'Direct HTTP port'
 $portLabel.Margin = [Windows.Forms.Padding]::new(0,7,8,0)
 $port = New-Object Windows.Forms.NumericUpDown
 $port.Minimum = 1
@@ -199,7 +200,14 @@ $port.Margin = [Windows.Forms.Padding]::new(0,5,12,0)
 $port.AccessibleName = 'Hermes server port'
 $authGuide = New-Button 'Authentication guide' { Open-Link 'https://hermes-agent.nousresearch.com/docs/user-guide/desktop#connecting-to-a-remote-backend' }
 $connectionActions.Controls.AddRange(@($portLabel,$port,$authGuide))
-Add-StatusRow 'Connection' $serverStatus $connectionActions
+$httpsUrl = New-Object Windows.Forms.TextBox
+$httpsUrl.Width = 385
+$httpsUrl.BackColor = $palette.Surface
+$httpsUrl.ForeColor = $palette.Ink
+$httpsUrl.AccessibleName = 'Existing Tailscale HTTPS URL'
+$connectionOptions = New-Flow $true
+$connectionOptions.Controls.AddRange(@((New-Text 'Existing Tailscale HTTPS URL (optional)'),$httpsUrl,$connectionActions))
+Add-StatusRow 'Connection' $serverStatus $connectionOptions
 
 $message = New-Text ''
 $message.ForeColor = $palette.Accent
@@ -231,6 +239,7 @@ function Get-PrimaryAction {
     if ($d.Tailscale.Code -eq 'Missing') { return @{ Name='InstallTailscale'; Label='Install Tailscale' } }
     if ($d.Tailscale.Code -eq 'AddressChanged') { return @{ Name='Diagnose'; Label='Check again' } }
     if ($d.Tailscale.Code -ne 'Ready') { return @{ Name='OpenTailscale'; Label='Open Tailscale' } }
+    if ($d.HttpsEndpoint -and $d.Server.Code -ne 'Ready') { return @{ Name='Diagnose'; Label='Test connection' } }
     if ($d.Server.Code -eq 'Unavailable') { return @{ Name='Server'; Label=$(if($script:NeedsLogin){'Set up sign-in'}else{'Set up and start'}) } }
     if ($d.Server.Code -eq 'Ready') {
         if ($script:Finished) { return @{ Name='Close'; Label='Finish' } }
@@ -368,9 +377,13 @@ function Show-Maintenance {
 function Update-Controls {
     $busy = [bool]$script:Job
     $d = $script:Diagnosis
-    foreach ($control in @($locate,$dataFolder,$getHermes,$continueWithoutDesktop,$tailscaleGuide,$verify,$port,$authGuide)) {
+    foreach ($control in @($locate,$dataFolder,$getHermes,$continueWithoutDesktop,$tailscaleGuide,$verify,$httpsUrl,$authGuide)) {
         $control.Enabled = !$busy
     }
+    $directHttp = !$httpsUrl.Text.Trim()
+    $portLabel.Visible = $directHttp
+    $port.Visible = $directHttp
+    $port.Enabled = !$busy -and $directHttp
     $getHermes.Visible = $d -and ($d.Hermes.Code -ne 'Ready' -or ($d.Desktop.Code -eq 'Missing' -and !$script:SkipDesktop))
     $continueWithoutDesktop.Visible = $d.Hermes.Code -eq 'Ready' -and $d.Desktop.Code -eq 'Missing' -and !$script:SkipDesktop
     $tailscaleGuide.Visible = $d.Tailscale.Code -eq 'Missing'
@@ -384,7 +397,7 @@ function Update-Controls {
 function Show-Diagnosis($Result) {
     $script:Diagnosis = $Result
     $script:IgnorePortChange = $true
-    try { $port.Value = $Result.Port } finally { $script:IgnorePortChange = $false }
+    try { $port.Value = $Result.Port; $httpsUrl.Text = [string]$Result.HttpsEndpoint } finally { $script:IgnorePortChange = $false }
     $hermesStatus.Text = if ($Result.Desktop.Code -eq 'Ready' -and $Result.Hermes.Code -eq 'Ready') {
         'Hermes Desktop and command line found.'
     } else { $Result.Desktop.Message + "`n" + $Result.Hermes.Message }
@@ -398,9 +411,10 @@ function Start-Work([string]$Operation,[string]$Progress,[bool]$Suggest=$false,[
     if ($script:Job) { return }
     $script:Finished = $false
     if ($Progress) { $message.Text = $Progress }
+    $httpsInput = if ($script:HttpsEdited -or $httpsUrl.Text.Trim()) { $httpsUrl.Text.Trim() }
     $worker = [PowerShell]::Create()
     $null = $worker.AddScript({
-        param($Core,$Op,$SelectedExe,$SelectedData,$SelectedPort,$SuggestPort,$LoginUser,$LoginPassword)
+        param($Core,$Op,$SelectedExe,$SelectedData,$SelectedPort,$SuggestPort,$LoginUser,$LoginPassword,$HttpsInput)
         . $Core
         if ($Op -eq 'CheckTailscale') {
             if ((Get-TailscaleInstall).Code -ne 'Ready') { return @{ WaitingForTailscale=$true } }
@@ -410,12 +424,12 @@ function Start-Work([string]$Operation,[string]$Progress,[bool]$Suggest=$false,[
             . (Join-Path (Split-Path $Core -Parent) 'Setup-Dependencies.ps1')
             $name = if ($Op -eq 'InstallHermes') { 'HermesDesktop' } else { 'Tailscale' }
             $label = if ($Op -eq 'InstallHermes') { 'Hermes Desktop' } else { 'Tailscale' }
-            $before = Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $false
+            $before = Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $false $HttpsInput
             $errorMessage = $null
             $result = $null
             try { $result = Install-SetupDependency $name $before }
             catch [ApplicationException] { $errorMessage = $_.Exception.Message }
-            $after = Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $SuggestPort
+            $after = Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $SuggestPort $HttpsInput
             $available = if ($Op -eq 'InstallHermes') { $after.Desktop.Code -eq 'Ready' } else { $after.Tailscale.Code -ne 'Missing' }
             $messageText = if ($errorMessage) { $errorMessage }
                 elseif ($result.ExitCode -in @(1641,3010)) { 'Windows needs to restart. Reopen Talaria after restarting and select Check again.' }
@@ -426,17 +440,17 @@ function Start-Work([string]$Operation,[string]$Progress,[bool]$Suggest=$false,[
         }
         $result = switch ($Op) {
             Server { Start-SetupServer $SelectedExe $SelectedData $SelectedPort $LoginUser $LoginPassword }
-            Install { Install-SetupTray $SelectedExe $SelectedData $SelectedPort }
-            Repair { Install-SetupTray $SelectedExe $SelectedData $SelectedPort $true }
+            Install { Install-SetupTray $SelectedExe $SelectedData $SelectedPort $false $HttpsInput }
+            Repair { Install-SetupTray $SelectedExe $SelectedData $SelectedPort $true $HttpsInput }
             EnableRecovery { Enable-SetupServerRecovery $SelectedPort }
             RemoveTray { Remove-SetupTray }
             RemoveServer { Remove-SetupServer }
             Diagnose { @{ Code='Diagnosis'; Message='' } }
         }
         $LoginPassword = $null
-        @{ Result=$result; Diagnosis=(Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $SuggestPort) }
+        @{ Result=$result; Diagnosis=(Get-SetupDiagnosis $SelectedExe $SelectedData $SelectedPort $SuggestPort $HttpsInput) }
     }).AddArgument($script:CoreFile).AddArgument($Operation).AddArgument($script:ExeOverride).AddArgument($script:DataOverride).
-        AddArgument([int]$port.Value).AddArgument($Suggest).AddArgument($Username).AddArgument($Password)
+        AddArgument([int]$port.Value).AddArgument($Suggest).AddArgument($Username).AddArgument($Password).AddArgument($httpsInput)
     $script:Job = @{ Worker=$worker; Operation=$Operation; Result=$worker.BeginInvoke() }
     $Password = $null
     Update-Controls
@@ -480,6 +494,16 @@ $timer.Add_Tick({
     } finally { $job.Worker.Dispose(); Update-Controls }
 })
 
+$httpsUrl.Add_TextChanged({
+    if ($script:IgnorePortChange -or $script:Job) { return }
+    $script:HttpsEdited = $true
+    $script:Diagnosis = $null
+    $script:NeedsLogin = $false
+    $script:Finished = $false
+    $serverStatus.Text = 'Connection changed. Test the connection again.'
+    Update-Controls
+})
+
 $port.Add_ValueChanged({
     if ($script:IgnorePortChange -or $script:Job) { return }
     $script:PortEdited = $true
@@ -515,6 +539,18 @@ try {
             }
         }
         if ($form.AcceptButton -ne $primary -or $port.AccessibleName -eq '') { throw 'Keyboard entry points are missing.' }
+        $example = $script:Diagnosis.Clone()
+        $example.HttpsEndpoint = 'https://node.example.ts.net:8443'
+        $example.Endpoint = $example.HttpsEndpoint
+        $example.Server = @{ Code='Unavailable'; Message='Gateway unavailable.' }
+        $example.HasTray = $true
+        Show-Diagnosis $example
+        if ((Get-PrimaryAction).Name -ne 'Diagnose' -or $port.Enabled) { throw 'HTTPS mode must only monitor the existing gateway.' }
+        $example.Remove('HttpsEndpoint')
+        $example.Endpoint = 'http://100.64.0.10:9119'
+        $example.Server = @{ Code='Ready'; Message='Protected connection verified.' }
+        $example.HasTray = $false
+        Show-Diagnosis $example
         $message.Text = 'Connection and sign-in protection verified. The indicator is ready to install.'
         if ($PreviewWidth -gt 0) { $form.Width = $PreviewWidth }
         if ($CheckLive -or $PreviewFile) { $form.Show(); [Windows.Forms.Application]::DoEvents() }
@@ -524,6 +560,8 @@ try {
             $deadline = [DateTime]::UtcNow.AddSeconds(18)
             while ($script:Job -and [DateTime]::UtcNow -lt $deadline) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 50 }
             if ($script:Job -or (Get-PrimaryAction).Name -ne 'Install' -or !$script:Diagnosis.HasTray) { throw 'The live diagnosis could not be verified.' }
+            $showDirectPort = !$script:Diagnosis.HttpsEndpoint
+            if ($port.Visible -ne $showDirectPort -or $portLabel.Visible -ne $showDirectPort) { throw 'The direct HTTP port does not match the selected connection mode.' }
             Write-Output 'PASS live diagnostic and upgrade action'
         }
         if ($PreviewFile) {
